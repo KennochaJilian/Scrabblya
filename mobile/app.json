@@ -26,7 +26,16 @@
       "android"
     ],
     "plugins": [
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": false,
+          "photosPermission": "Choisir une photo pour votre avatar Scrabblya.",
+          "microphonePermission": false
+        }
+      ]
     ]
   }
 }

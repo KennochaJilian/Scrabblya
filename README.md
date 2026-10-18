@@ -1,53 +1,64 @@
 # Scrabblya
 
-Jeu de lettres Android pour jouer en famille, dans la continuité d’Alexandrya.
+Jeu de lettres Android en famille. Application Expo / React Native / TypeScript et API Node / Express, avec comptes et profils Supabase.
 
-## Démarrage
+## Mise en service des comptes
 
-Node 22.13 ou ultérieur. Expo SDK 57, compatible avec Expo Go du Play Store au 18 octobre 2026.
+Suivre **[api/README.md](api/README.md)** : création du projet Supabase, migration SQL, configuration `.env`, seed du premier administrateur et URL de l’API dans l’app.
+
+```powershell
+cd api
+npm ci
+# Compléter .env à partir de .env.example et appliquer la migration SQL.
+npm run seed:admin
+npm run dev
+```
+
+Dans un second terminal :
 
 ```powershell
 cd mobile
 npm ci
+# Compléter EXPO_PUBLIC_API_URL dans .env à partir de .env.example.
 npx expo start --clear
 ```
 
-Dans Expo Go : **Accéder au jeu local**, puis **Jouer ou reprendre une partie**.
+Expo SDK 57 pour Expo Go Android. Aucun secret serveur dans l’app.
 
-## Partie locale jouable
+## Comptes et profils
 
-- Deux joueurs se passent le téléphone ; leur chevalet est masqué entre les tours.
-- Glisser-déposer des lettres, placement par deux touchers et reprise du brouillon.
-- Validation des placements et de tous les mots croisés, avec aperçu du score.
-- Bonus classiques, bonus de 50 points pour sept lettres, jokers à zéro point.
-- Pioche de 102 lettres selon la distribution française, sept lettres par joueur.
-- Échanges si au moins sept lettres restent dans le sac ; choix des lettres échangées.
-- Fin sur chevalet épuisé et sac vide, ou six passes consécutives, avec décompte des reliquats.
-- Partie et historique sauvegardés sur le téléphone dès la création puis après chaque tour validé. Les brouillons non validés ne sont pas conservés.
-- Une seule partie locale à la fois. Une nouvelle partie demande confirmation avant de remplacer la précédente.
+- Connexion email/mot de passe, session conservée dans le stockage sécurisé Android.
+- Rôles admin et utilisateur vérifiés côté serveur.
+- Création des comptes via `POST /api/admin/users` ou l’écran admin de l’app.
+- Premier admin créé localement par `npm run seed:admin` dans api/.
+- Profil avec nom et avatar modifiables ; avatars privés via liens signés.
+- Sélection du second joueur dans la liste des vrais comptes ; noms/avatars affichés dans la partie et l’historique.
+- Sauvegardes locales séparées par paire de comptes. Les anciennes parties anonymes restent dans leur clé locale mais ne sont pas automatiquement attribuées à un utilisateur.
 
-Le lexique embarqué contient 405 616 formes issues de Grammalecte 7.7 sous MPL 2.0. Voir [la politique de lexique](docs/lexique.md) et les notices dans mobile/vendor/grammalecte/.
+## Jeu local
 
-## Architecture
+Plateau classique, glisser-déposer plateau/chevalet, réarrangement du chevalet, validation des mots et croisements, bonus, jokers, pioche française, échanges, passes, historique et fin de partie avec reliquats. Lexique hors ligne de 405 616 mots Grammalecte 7.7 sous MPL 2.0 : [détails](docs/lexique.md).
 
-`mobile/src/engine.ts` est un moteur TypeScript pur : aucune dépendance native, ni réseau. Il pourra être réutilisé côté serveur. Les actions renvoient un nouvel état ; une action refusée ne consomme pas le tour et ne modifie pas la partie.
+Les tours validés sont enregistrés sur le téléphone. Les brouillons non validés ne sont pas conservés après fermeture.
 
-`mobile/src/LocalGame.tsx` relie le moteur, le lexique et la sauvegarde AsyncStorage. Les écritures sont sérialisées et le passage de tour n’est affiché qu’après réussite de la sauvegarde.
+## Mode développeur
+
+Menu de partie → Mode développeur : égalité 200/200, victoire J1 240/200, victoire J2 200/240, Scrabble MAISONS à poser ou prêt à valider (66 points dont 50 de bonus). Les essais n’écrasent pas la sauvegarde normale. Revenir à ma partie restaure aussi le brouillon de la session.
 
 ## Vérifications
 
 ```powershell
-cd mobile
-npm test
-npm run typecheck
-npm run lint
-npx expo export --platform android
+npm --prefix api test
+npm --prefix api run check
+npm --prefix mobile test
+npm --prefix mobile run typecheck
+npm --prefix mobile run lint
 ```
 
-Le bundle Android compile. Le ressenti des gestes et la reprise après fermeture doivent encore être vérifiés sur un vrai téléphone.
+Pour compiler le bundle Android : `cd mobile` puis `npx expo export --platform android`.
 
-## Prochaine étape
+## Reste à activer
 
-Connexion Supabase, comptes sur invitation, parties entre téléphones et notifications push. L’écran de connexion reste visuel : aucun serveur ni secret SMTP n’est configuré. La sauvegarde actuelle reste locale et ne synchronise pas les téléphones.
+Le projet Supabase n’est pas encore créé : aucune connexion réelle ni création d’admin n’a été effectuée sur un service distant. Les fichiers, migrations et tests sont prêts pour ce branchement.
 
-Les ressources visuelles sont reprises d’Alexandrya. Les alertes de dépendances Expo existantes sont consignées dans docs/verification.md avant distribution.
+Le jeu reste à deux sur le même téléphone. Synchronisation des parties et notifications push entre appareils restent à développer.

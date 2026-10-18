@@ -1,40 +1,73 @@
-import React, { useState } from 'react';
+import React,{useEffect,useState} from 'react';
+import { ActivityIndicator,Alert,Image,Keyboard,KeyboardAvoidingView,Platform,Pressable,ScrollView,StyleSheet,Text,TextInput,View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { AuthProvider,useAuth } from './src/AuthContext';
+import { api,uploadAvatar } from './src/api';
+import type { PublicUser } from './src/apiClient';
+import { UserAvatar } from './src/UserAvatar';
 import { LocalGame } from './src/LocalGame';
-
-const purple = '#4b0565';
-type Screen = 'login' | 'home' | 'game';
-function Button({title,onPress,soft=false}:{title:string;onPress:()=>void;soft?:boolean}) { return <Pressable accessibilityRole="button" onPress={onPress} style={({pressed})=>[s.button,soft&&s.soft,pressed&&{opacity:.7}]}><Text style={[s.buttonText,soft&&{color:purple}]}>{title}</Text></Pressable>; }
-export default function App() {
- const [screen,setScreen]=useState<Screen>('login'); const [email,setEmail]=useState(''); const [password,setPassword]=useState(''); const [visible,setVisible]=useState(false); const [message,setMessage]=useState(''); const [tab,setTab]=useState('En cours');
- function openGame(){setMessage('');setScreen('game');}
- if(screen==='game')return <LocalGame onBack={()=>setScreen('home')}/>;
- return <View style={s.root}><StatusBar style="dark"/><Image accessible={false} source={require('./assets/floral-corner-left.png')} style={s.flowers}/><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView contentContainerStyle={s.page} keyboardShouldPersistTaps="handled">
- {screen==='login'? <>
- <Image source={require('./assets/alexandrya-login-logo.webp')} style={s.hero} resizeMode="contain" accessibilityLabel="Livre et arbre fleuri d’Alexandrya"/>
- <Text style={s.brand}>Scrabblya</Text><Text style={s.tagline}>Des lettres, des liens, de belles parties.</Text>
- <View style={s.card}><Text style={s.title}>Bienvenue chez vous</Text><Text style={s.subtitle}>Retrouvez votre famille autour des mots.</Text>
- <Text style={s.label}>Email</Text><TextInput style={s.input} value={email} onChangeText={setEmail} placeholder="votre@email.com" keyboardType="email-address" autoCapitalize="none" autoComplete="email" accessibilityLabel="Email"/>
- <Text style={s.label}>Mot de passe</Text><View style={s.password}><TextInput style={{flex:1,padding:14,color:purple}} value={password} onChangeText={setPassword} secureTextEntry={!visible} autoComplete="current-password" accessibilityLabel="Mot de passe"/><Pressable accessibilityRole="button" onPress={()=>setVisible(!visible)} style={{padding:12}}><Text style={s.link}>{visible?'Masquer':'Voir'}</Text></Pressable></View>
- <Button title="Se connecter →" onPress={()=>setMessage('La connexion sera disponible après configuration de Supabase.')}/><Pressable onPress={()=>setMessage('La réinitialisation sera disponible après configuration de Supabase et du SMTP.')}><Text style={s.forgot}>Mot de passe oublié ?</Text></Pressable>
- <Text style={s.subtitle}>Accès créé par un administrateur.</Text></View>
- <Button soft title="Accéder au jeu local" onPress={()=>{setMessage('');setScreen('home');}}/>
+const purple='#4b0565';
+function Button({title,onPress,disabled=false,soft=false}:{title:string;onPress:()=>void;disabled?:boolean;soft?:boolean}){return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[s.button,soft&&s.soft,disabled&&{opacity:.4}]}><Text style={[s.buttonText,soft&&{color:purple}]}>{title}</Text></Pressable>;}
+export default function App(){return <AuthProvider><Application/></AuthProvider>;}
+function Application(){
+ const {user,loading,error:restoreError,retry}=useAuth();
+ const [screen,setScreen]=useState<'home'|'game'|'profile'|'admin'>('home');
+ const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[visible,setVisible]=useState(false),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
+ const [users,setUsers]=useState<PublicUser[]>([]),[opponent,setOpponent]=useState<PublicUser|null>(null),[name,setName]=useState('');
+ const [newName,setNewName]=useState(''),[newEmail,setNewEmail]=useState(''),[newPassword,setNewPassword]=useState('');
+ useEffect(()=>{
+  if(!user)return;
+  let alive=true;
+  api.users().then(list=>{if(alive)setUsers(list);}).catch(e=>{if(alive)setMessage((e as Error).message);});
+  return ()=>{alive=false;};
+ },[user]);
+ async function execute(work:()=>Promise<void>){if(busy)return;setBusy(true);setMessage('');try{await work();}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
+ async function avatar(){
+  try{
+   if(__DEV__)console.info('[Scrabblya avatar] ouverture de la galerie');
+   const result=await ImagePicker.launchImageLibraryAsync({mediaTypes:['images'],allowsEditing:true,aspect:[1,1],quality:.7});
+   if(result.canceled){if(__DEV__)console.info('[Scrabblya avatar] sélection annulée');return;}
+   if(__DEV__)console.info('[Scrabblya avatar] photo sélectionnée');
+   const asset=result.assets[0];if(asset.fileSize&&asset.fileSize>2097152){setMessage('Choisissez une image de moins de 2 Mo.');return;}
+   await execute(async()=>{await uploadAvatar(asset.uri);setMessage('Avatar mis à jour.');});
+  }catch(e){setMessage((e as Error).message);}
+ }
+ if(loading)return <View style={[s.root,s.center]}><ActivityIndicator size="large" color={purple}/></View>;
+ if(user&&screen==='game'&&opponent)return <LocalGame participants={[user,opponent]} onBack={()=>setScreen('home')}/>;
+ return <View style={s.root}><StatusBar style="dark"/><Image accessible={false} source={require('./assets/floral-corner-left.png')} style={s.flowers}/><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.page}>
+ {!user?<>
+ <Image source={require('./assets/alexandrya-login-logo.webp')} style={s.hero} resizeMode="contain"/><Text style={s.brand}>Scrabblya</Text><Text style={s.tagline}>Des lettres, des liens, de belles parties.</Text>
+ <View style={s.card}><Text style={s.title}>Connexion</Text><Text style={s.label}>Email</Text><TextInput accessibilityLabel="Email" style={s.input} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email"/>
+ <Text style={s.label}>Mot de passe</Text><View style={s.password}><TextInput accessibilityLabel="Mot de passe" style={{flex:1,padding:15,color:purple}} value={password} onChangeText={setPassword} secureTextEntry={!visible} autoComplete="current-password"/><Pressable accessibilityRole="button" accessibilityLabel={visible?'Masquer le mot de passe':'Afficher le mot de passe'} onPress={()=>setVisible(!visible)} style={{padding:12}}><Ionicons name={visible?'eye-off-outline':'eye-outline'} size={22} color={purple}/></Pressable></View>
+ {!!message&&<Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={s.notice}>{message}</Text>}
+ <Button title={busy?'Connexion…':'Se connecter'} disabled={busy||!email.trim()||!password} onPress={()=>{Keyboard.dismiss();void execute(async()=>{await api.login(email,password);setPassword('');setScreen('home');});}}/>
+ <Pressable onPress={()=>Alert.alert('Mot de passe oublié','Votre administrateur peut réinitialiser votre mot de passe.')}><Text style={s.link}>Mot de passe oublié ?</Text></Pressable><Text style={s.subtitle}>Comptes créés par un administrateur.</Text>
+ </View>{!!restoreError&&<><Text style={s.notice}>{restoreError}</Text><Button soft title="Réessayer la session enregistrée" onPress={retry}/></>}
  </>:<>
- <View style={s.header}><View><Text style={s.brandSmall}>Scrabblya</Text><Text style={s.subtitle}>Le plaisir des mots, en famille</Text></View><Pressable accessibilityLabel="Retour à la connexion" onPress={()=>{setScreen('login');setMessage('');}}><Text style={s.avatar}>S</Text></Pressable></View>
- <View style={s.demo}><Text style={s.demoText}>Mode local · deux joueurs sur ce téléphone</Text></View>
+ <View style={s.header}><View><Text style={s.brandSmall}>Scrabblya</Text><Text style={s.subtitle}>Bonjour {user.name}</Text></View><Pressable accessibilityRole="button" accessibilityLabel="Mon profil" onPress={()=>{setName(user.name);setMessage('');setScreen('profile');}}><UserAvatar name={user.name} avatarUrl={user.avatarUrl} size={50}/></Pressable></View>
+ {screen!=='home'&&<Button soft title="‹ Accueil" onPress={()=>{setMessage('');setScreen('home');}}/>}
  {screen==='home'?<>
- <Text style={s.heading}>Un moment pour jouer</Text><Text style={s.subtitle}>Vos prochaines belles trouvailles vous attendent.</Text><Button title="Jouer ou reprendre une partie" onPress={()=>openGame()}/>
- <View style={s.tabs}>{['En cours','Invitations','Terminées'].map(t=><Pressable key={t} onPress={()=>setTab(t)} style={[s.tab,tab===t&&s.activeTab]}><Text style={{color:tab===t?'white':purple,fontWeight:'600'}}>{t}</Text></Pressable>)}</View>
- {tab==='En cours'?<Pressable onPress={()=>openGame()} style={s.gameCard}><Text style={s.person}>Partie sur ce téléphone</Text><Text style={s.subtitle}>Deux joueurs, chacun son tour. Retrouvez votre partie sauvegardée ou commencez-en une nouvelle depuis le plateau.</Text><Text style={s.link}>Jouer ou reprendre →</Text></Pressable>:<View style={s.card}><Text style={s.title}>{tab==='Invitations'?'Invitations à venir':'Historique local'}</Text><Text style={s.subtitle}>{tab==='Invitations'?'Les invitations seront disponibles avec les comptes familiaux.':'Le résultat et les coups sont conservés dans la partie locale, jusqu’au démarrage d’une nouvelle partie.'}</Text></View>}
- <Text style={s.footer}>✿ Une petite pause, un grand mot.</Text>
- </>:<>
- <Text>Partie locale</Text>
+ <Text style={s.heading}>Avec qui jouer ?</Text><Text style={s.subtitle}>Deux joueurs sur ce téléphone. Les parties entre téléphones arrivent ensuite.</Text>
+ {users.filter(p=>p.id!==user.id).map(p=><Pressable key={p.id} accessibilityRole="button" accessibilityLabel={`Jouer avec ${p.name}`} onPress={()=>{setOpponent(p);setMessage('');setScreen('game');}} style={s.person}><UserAvatar name={p.name} avatarUrl={p.avatarUrl}/><Text style={s.personName}>{p.name}</Text><Ionicons name="chevron-forward" size={24} color={purple}/></Pressable>)}
+ {users.filter(p=>p.id!==user.id).length===0&&<View style={s.card}><Text style={s.subtitle}>Aucun autre joueur disponible. Un administrateur doit créer les comptes familiaux.</Text></View>}
+ <Button soft title="Actualiser les joueurs" disabled={busy} onPress={()=>{void execute(async()=>setUsers(await api.users()));}}/>
+ {user.role==='admin'&&<Button title="Gestion des utilisateurs" onPress={()=>{setMessage('');setScreen('admin');}}/>}
+ </>:screen==='profile'?<View style={s.card}>
+ <Text style={s.title}>Mon profil</Text><View style={{alignItems:'center',gap:12}}><UserAvatar name={user.name} avatarUrl={user.avatarUrl} size={90}/><Button soft title="Choisir un avatar" disabled={busy} onPress={()=>{void avatar();}}/></View>
+ <Text style={s.label}>Nom</Text><TextInput accessibilityLabel="Nom du profil" style={s.input} value={name} onChangeText={setName} maxLength={80}/><Text style={s.subtitle}>{user.email} · {user.role==='admin'?'Administrateur':'Utilisateur'}</Text>
+ <Button title="Enregistrer" disabled={busy||!name.trim()} onPress={()=>{void execute(async()=>{await api.updateName(name);setMessage('Profil mis à jour.');});}}/>
+ <Button soft title="Se déconnecter" disabled={busy} onPress={()=>{void execute(async()=>{try{await api.logout();}finally{setUsers([]);setOpponent(null);setScreen('home');}});}}/>
+ </View>:screen==='admin'&&user.role==='admin'?<View style={s.card}>
+ <Text style={s.title}>Ajouter un utilisateur</Text><Text style={s.label}>Nom</Text><TextInput accessibilityLabel="Nom du nouvel utilisateur" style={s.input} value={newName} onChangeText={setNewName} maxLength={80}/>
+ <Text style={s.label}>Email</Text><TextInput accessibilityLabel="Email du nouvel utilisateur" style={s.input} value={newEmail} onChangeText={setNewEmail} keyboardType="email-address" autoCapitalize="none"/>
+ <Text style={s.label}>Mot de passe initial</Text><TextInput accessibilityLabel="Mot de passe initial du nouvel utilisateur" style={s.input} value={newPassword} onChangeText={setNewPassword} secureTextEntry autoCapitalize="none"/>
+ <Text style={s.subtitle}>12 caractères minimum. Le nouveau compte aura le rôle utilisateur.</Text><Button title="Créer le compte" disabled={busy||!newName.trim()||!newEmail.trim()||newPassword.length<12} onPress={()=>{void execute(async()=>{await api.createUser({name:newName.trim(),email:newEmail.trim(),password:newPassword});setNewName('');setNewEmail('');setNewPassword('');setUsers(await api.users());setMessage('Compte créé.');});}}/>
+ {users.map(p=><View key={p.id} style={s.person}><UserAvatar name={p.name} avatarUrl={p.avatarUrl} size={34}/><View style={{flex:1}}><Text style={s.personName}>{p.name}</Text><Text style={s.subtitle}>{p.email} · {p.role}</Text></View></View>)}
+ </View>:null}
  </>}
- </>}
- {!!message&&<View accessibilityLiveRegion="polite" style={s.notice}><Text style={{color:purple,lineHeight:21}}>{message}</Text><Pressable onPress={()=>setMessage('')} style={{padding:8}}><Text style={s.link}>Fermer</Text></Pressable></View>}
+ {!!message&&!!user&&<Text accessibilityLiveRegion="polite" style={s.notice}>{message}</Text>}
  </ScrollView></KeyboardAvoidingView></View>;
 }
-const s=StyleSheet.create({dragTile:{position:'absolute',top:0,left:0,width:52,height:52,borderRadius:9,backgroundColor:'#ffe8ca',borderWidth:2,borderColor:'#fff6e5',justifyContent:'center',alignItems:'center',elevation:12,zIndex:100,shadowColor:'#4b0565',shadowOpacity:.25,shadowRadius:8},root:{flex:1,backgroundColor:'#f3eafa'},flowers:{position:'absolute',bottom:0,left:0,width:210,height:330,opacity:.4},page:{padding:18,paddingTop:52,paddingBottom:40,width:'100%',maxWidth:600,alignSelf:'center',gap:16},hero:{width:220,height:180,alignSelf:'center'},brand:{fontSize:48,fontStyle:'italic',fontFamily:'serif',color:purple,textAlign:'center',marginTop:-16},brandSmall:{fontSize:33,fontFamily:'serif',fontStyle:'italic',color:purple},tagline:{textAlign:'center',color:'#7d3b93',marginBottom:12},card:{backgroundColor:'#ffffffed',borderRadius:26,padding:24,gap:16,borderWidth:1,borderColor:'white'},title:{fontSize:23,fontWeight:'700',color:purple,textAlign:'center'},subtitle:{fontSize:13,color:'#756b81',lineHeight:20},label:{fontSize:15,color:'#5f4773',fontWeight:'600'},input:{borderWidth:1,borderColor:'#d9cfdf',borderRadius:14,padding:15,color:purple,backgroundColor:'#fffcff',fontSize:16},password:{flexDirection:'row',borderWidth:1,borderColor:'#d9cfdf',borderRadius:14,alignItems:'center',backgroundColor:'#fffcff'},button:{backgroundColor:purple,borderRadius:28,paddingVertical:16,paddingHorizontal:22,alignItems:'center',minHeight:50},buttonText:{color:'white',fontSize:16,fontWeight:'700'},soft:{backgroundColor:'#ebe0f4'},link:{color:purple,fontWeight:'600'},forgot:{textAlign:'center',color:purple,textDecorationLine:'underline',padding:8},header:{flexDirection:'row',justifyContent:'space-between',alignItems:'center'},avatar:{width:48,height:48,borderRadius:24,backgroundColor:'#e6d4f0',textAlign:'center',textAlignVertical:'center',fontSize:25,color:purple,overflow:'hidden'},demo:{backgroundColor:'#e7daf1',padding:9,borderRadius:10},demoText:{color:'#6b4781',fontSize:12,textAlign:'center'},heading:{fontSize:29,fontFamily:'serif',fontWeight:'700',color:purple},tabs:{flexDirection:'row',backgroundColor:'#ffffff99',borderRadius:24,padding:4},tab:{flex:1,paddingVertical:12,alignItems:'center',borderRadius:22},activeTab:{backgroundColor:purple},gameCard:{padding:20,backgroundColor:'#ffffffed',borderRadius:25,gap:15,borderWidth:1,borderColor:'white'},row:{flexDirection:'row',gap:12,alignItems:'center',justifyContent:'space-between'},person:{color:purple,fontSize:20,fontWeight:'700'},scores:{fontSize:25,color:purple,fontWeight:'600',marginTop:5},arrow:{fontSize:35,color:'#8959a3'},pill:{paddingVertical:7,paddingHorizontal:12,borderRadius:16,color:'#4e4262',fontSize:13},word:{flexDirection:'row',gap:4},miniTile:{backgroundColor:'#fbe1c3',borderRadius:4,padding:6,color:purple,fontSize:16},footer:{textAlign:'center',color:'#88649e',padding:12},scoreBar:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',backgroundColor:'#ffffffcf',borderRadius:24,padding:20},bigScore:{fontSize:34,color:purple,fontWeight:'700'},ornament:{fontSize:40,color:'#a06bbc'},instructions:{fontSize:13,lineHeight:20,color:'#756b81'},board:{flexDirection:'row',flexWrap:'wrap',backgroundColor:'#fff',padding:0,borderRadius:8},cell:{margin:1,borderRadius:3,justifyContent:'center',alignItems:'center'},placed:{borderWidth:1,borderColor:'#c99055'},rack:{flexDirection:'row',gap:5,padding:9,borderRadius:16,backgroundColor:'#ad7a57',marginTop:10},tile:{flex:1,height:53,borderRadius:8,backgroundColor:'#ffe8ca',borderWidth:2,borderColor:'#fff6e5',justifyContent:'center',alignItems:'center'},selected:{borderColor:purple,transform:[{translateY:-6}]},letter:{fontSize:27,fontWeight:'700',color:purple},points:{position:'absolute',right:4,bottom:2,fontSize:10,color:purple},notice:{padding:16,borderRadius:16,backgroundColor:'#fff9e9',borderWidth:1,borderColor:'#ead8b7',gap:6}});
-
-
+const s=StyleSheet.create({root:{flex:1,backgroundColor:'#f3eafa'},center:{justifyContent:'center',alignItems:'center'},flowers:{position:'absolute',bottom:0,left:0,width:210,height:330,opacity:.3},page:{width:'100%',maxWidth:600,alignSelf:'center',padding:20,paddingTop:48,paddingBottom:40,gap:18},hero:{width:220,height:180,alignSelf:'center'},brand:{fontSize:46,fontFamily:'serif',fontStyle:'italic',color:purple,textAlign:'center'},brandSmall:{fontSize:31,fontFamily:'serif',fontStyle:'italic',color:purple},tagline:{textAlign:'center',color:'#7d3b93'},card:{backgroundColor:'#ffffffed',borderRadius:25,padding:22,gap:16},title:{fontSize:23,fontWeight:'700',color:purple},heading:{fontSize:27,fontFamily:'serif',color:purple},label:{fontSize:15,fontWeight:'600',color:'#5f4773'},input:{borderWidth:1,borderColor:'#d9cfdf',borderRadius:12,padding:15,fontSize:16,color:purple,backgroundColor:'#fffcff'},password:{flexDirection:'row',alignItems:'center',borderWidth:1,borderColor:'#d9cfdf',borderRadius:12,backgroundColor:'#fffcff'},button:{backgroundColor:purple,padding:15,borderRadius:25,minHeight:48,alignItems:'center'},soft:{backgroundColor:'#e8dbf2'},buttonText:{fontSize:16,fontWeight:'700',color:'white'},header:{flexDirection:'row',justifyContent:'space-between',alignItems:'center'},subtitle:{fontSize:13,lineHeight:20,color:'#756b81'},link:{color:purple,textAlign:'center',textDecorationLine:'underline',padding:8},person:{flexDirection:'row',alignItems:'center',gap:12,backgroundColor:'#fff9ff',padding:16,borderRadius:20},personName:{flex:1,color:purple,fontSize:17,fontWeight:'600'},notice:{padding:16,borderRadius:14,backgroundColor:'#fff9e9',color:purple,lineHeight:22}});

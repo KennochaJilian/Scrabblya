@@ -5,15 +5,19 @@ import { StatusBar } from 'expo-status-bar';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { bonusAt, points } from './board';
-import { createGame, exchangeTiles, Game, passTurn, Placement, playMove, shuffle } from './engine';
+import { exchangeTiles, Game, passTurn, Placement, playMove, shuffle } from './engine';
 import { lexicon, lexiconMetadata } from './lexicon';
 import { BoardBounds, cellAtPoint, TileGrab, tilePosition } from './dropTarget';
 import { cellsRectangle, moveFeedback } from './moveFeedback';
 import { DraggableTile } from './DraggableTile';
 import { TileFace } from './TileFace';
+import { UserAvatar } from './UserAvatar';
+import type { PublicUser } from './apiClient';
+import { bindProfiles, createProfileGame, profileGameKey } from './playerProfiles';
+import { createDevScenario, DevScenario } from './devScenarios';
 import { rackSlotAtPoint, relocateDraft, reorderRack } from './tileMoves';
 
-const purple='#4b0565', storageKey='scrabblya.local-game.v1';
+const purple='#4b0565';
 let saveQueue=Promise.resolve();
 type IconName=React.ComponentProps<typeof Ionicons>['name'];
 type ButtonIcon=IconName|'recover-tiles';
@@ -23,10 +27,13 @@ function IconButton({icon,label,onPress,disabled=false,primary=false,count}:{ico
 function Action({label,onPress,disabled=false,icon='checkmark-outline'}:{label:string;onPress:()=>void;disabled?:boolean;icon?:IconName}) {
  return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[s.action,disabled&&{opacity:.35}]}><Ionicons name={icon} size={22} color={purple}/><Text style={s.actionText}>{label}</Text></Pressable>;
 }
-export function LocalGame({onBack}:{onBack:()=>void}) {
- return <SafeAreaProvider><GameScreen onBack={onBack}/></SafeAreaProvider>;
+type GameProps={onBack:()=>void;participants?:PublicUser[]};
+export function LocalGame({onBack,participants}:GameProps) {
+ return <SafeAreaProvider><GameScreen onBack={onBack} participants={participants}/></SafeAreaProvider>;
 }
-function GameScreen({onBack}:{onBack:()=>void}) {
+function GameScreen({onBack,participants}:GameProps) {
+ const participantSnapshot=useRef(participants);
+ const storageKey=profileGameKey(participants);
  const [game,setGame]=useState<Game|null>(null),[error,setError]=useState(''),[saving,setSaving]=useState(false),[revealed,setRevealed]=useState(false);
  const [draft,setDraft]=useState<Placement[]>([]),[selected,setSelected]=useState<number|null>(null);
  const [exchange,setExchange]=useState(false),[exchangeSelection,setExchangeSelection]=useState<number[]>([]);
@@ -38,6 +45,9 @@ function GameScreen({onBack}:{onBack:()=>void}) {
  const [rackHover,setRackHover]=useState<number|null>(null);
  const [dragReady,setDragReady]=useState(false),[feedbackDetails,setFeedbackDetails]=useState(false);
  const [menuOpen,setMenuOpen]=useState(false),[historyOpen,setHistoryOpen]=useState(false),[infoOpen,setInfoOpen]=useState(false),[resultDismissed,setResultDismissed]=useState(false);
+ const [devOpen,setDevOpen]=useState(false),[devActive,setDevActive]=useState(false);
+ const devBackup=useRef<{game:Game;draft:Placement[];order:number[];revealed:boolean}|null>(null);
+ const [celebration,setCelebration]=useState<{score:number}|null>(null);
  const insets=useSafeAreaInsets();
  const {width,height}=useWindowDimensions(),boardWidth=Math.max(0,width-insets.left-insets.right-2),cellSize=boardWidth/15,rackTileSize=Math.max(20,(boardWidth-32)/7);
  useEffect(()=>{
@@ -46,17 +56,24 @@ function GameScreen({onBack}:{onBack:()=>void}) {
    if(cancelled)return;
    if(raw){const saved=JSON.parse(raw) as Game;
     if(saved.version!==1||saved.lexiconId!==lexicon.id||saved.board.length!==225||saved.players.length!==2)throw new Error('Sauvegarde incompatible.');
-    setGame(saved);
-   }else void commit(createGame(['Joueur 1','Joueur 2'],lexicon.id));
+    setGame(bindProfiles(saved,participantSnapshot.current));
+   }else{
+    const created=createProfileGame(participantSnapshot.current,lexicon.id);
+    const write=saveQueue.then(()=>AsyncStorage.setItem(storageKey,JSON.stringify(created)));
+    saveQueue=write.catch(()=>{});
+    return write.then(()=>{if(!cancelled)setGame(created);});
+   }
   }).catch(()=>{if(!cancelled)setError('Impossible de lire la sauvegarde. Vous pouvez démarrer une nouvelle partie.');});
   return ()=>{cancelled=true;};
- },[]);
+ },[storageKey]);
  // All writes are serialized, including writes from a previously unmounted screen.
  async function commit(next:Game){
   setSaving(true);setError('');
-  const write=saveQueue.then(()=>AsyncStorage.setItem(storageKey,JSON.stringify(next)));
-  saveQueue=write.catch(()=>{});
-  try{await write;setResultDismissed(false);setGame(next);setDraft([]);setSelected(null);setExchange(false);setExchangeSelection([]);setRevealed(false);setOrder([0,1,2,3,4,5,6]);}
+  const write=devActive?Promise.resolve():saveQueue.then(()=>AsyncStorage.setItem(storageKey,JSON.stringify(next)));
+  if(!devActive)saveQueue=write.catch(()=>{});
+  try{await write;
+   if(draft.length===7&&next.history.length>0&&next.history[next.history.length-1].kind==='play')setCelebration({score:next.history[next.history.length-1].score});
+   setResultDismissed(false);setGame(next);setDraft([]);setSelected(null);setExchange(false);setExchangeSelection([]);setRevealed(false);setOrder([0,1,2,3,4,5,6]);}
   catch{setError('Sauvegarde impossible : le tour n’a pas été validé. Réessayez.');}
   finally{setSaving(false);}
  }
@@ -66,7 +83,8 @@ function GameScreen({onBack}:{onBack:()=>void}) {
  const playable=!!game&&game.status==='playing'&&revealed&&!saving;
  const rack=game?.players[game.current].rack??[];
  const used=new Set(draft.map(p=>p.rackIndex));
- const opponent=game?.players[1-game.current];
+ const visiblePlayers=game?(devActive?game.players:bindProfiles(game,participants).players):[];
+ const opponent=game?visiblePlayers[1-game.current]:undefined;
  const lastTurn=game?.history[game.history.length-1];
  function cancelDrag(){dragRef.current=null;setDrag(null);setDragReady(false);setHover(null);setRackHover(null);}
  function moveDrag(x:number,y:number){
@@ -82,7 +100,7 @@ function GameScreen({onBack}:{onBack:()=>void}) {
   const ghostWidth=Math.max(80,grab.width*1.6),ghostHeight=ghostWidth;
   const enlargedGrab={offsetX:grab.offsetX*ghostWidth/grab.width,offsetY:grab.offsetY*ghostHeight/grab.height,width:ghostWidth,height:ghostHeight};
   const active={index,letter:pending?.letter??rack[index],sourceCell,value:rack[index]==='?'?0:points[rack[index]],grab:enlargedGrab,x,y,ready:false};dragRef.current=active;
-  setDrag(active);setDragReady(false);setSelected(null);bounds.current=null;rackBounds.current=null;
+  setDrag({...active});setDragReady(false);setSelected(null);bounds.current=null;rackBounds.current=null;
   rootRef.current?.measure((_x,_y,_w,_h,pageX,pageY)=>{
    if(dragRef.current!==active)return;
    origin.current={x:pageX,y:pageY};active.ready=true;
@@ -136,11 +154,26 @@ function GameScreen({onBack}:{onBack:()=>void}) {
   if(exchange){setExchangeSelection(a=>a.includes(index)?a.filter(i=>i!==index):[...a,index]);return;}
   setSelected(index);
  }
+ function loadDevScenario(scenario:DevScenario){
+  if(!game||saving)return;
+  try{
+   const fixture=createDevScenario(scenario,lexicon);
+   if(!devBackup.current)devBackup.current={game,draft:[...draft],order:[...order],revealed};
+   cancelDrag();setDevActive(true);setDevOpen(false);setMenuOpen(false);setGame(fixture.game);setDraft(fixture.draft);
+   setOrder([0,1,2,3,4,5,6]);setRevealed(true);setSelected(null);setExchange(false);setExchangeSelection([]);setJoker(null);setError('');setFeedbackDetails(false);setCelebration(null);setResultDismissed(false);
+  }catch(e){setError((e as Error).message);}
+ }
+ function leaveDevMode(){
+  const backup=devBackup.current;if(!backup)return;
+  cancelDrag();setGame(backup.game);setDraft(backup.draft);setOrder(backup.order);setRevealed(backup.revealed);
+  setDevActive(false);setDevOpen(false);setMenuOpen(false);setSelected(null);setExchange(false);setExchangeSelection([]);setJoker(null);setError('');setFeedbackDetails(false);setCelebration(null);setResultDismissed(false);devBackup.current=null;
+ }
  function perform(action:()=>Game){try{void commit(action());}catch(e){setError((e as Error).message);}}
  return <SafeAreaView edges={['top','bottom','left','right']} style={s.safe}><ScrollView scrollEnabled={!drag} showsVerticalScrollIndicator={false} contentContainerStyle={{flexGrow:1}}><View testID="game-root" ref={rootRef} collapsable={false} style={[s.root,{minHeight:Math.max(height-insets.top-insets.bottom,boardWidth+349)}]}><StatusBar style="dark"/>
  <Image accessible={false} source={require('../assets/floral-corner-left.png')} style={s.flowers}/>
+ {devActive&&<View style={s.devBadge}><Text style={s.devBadgeText}>DEV</Text></View>}
  <View style={s.header}>
- {game?.players.map((p,i)=>{const active=game.current===i&&game.status==='playing',inactive=game.status==='playing'&&!active;return <React.Fragment key={i}><View style={[s.player,active&&s.active,inactive&&s.inactivePlayer]}><View style={[s.avatar,active&&s.activeAvatar,inactive&&s.inactiveAvatar]}><Text style={[s.avatarText,inactive&&{fontSize:14}]}>{i+1}</Text></View><View style={s.playerDetails}><Text numberOfLines={1} style={[s.name,active&&{fontSize:16},inactive&&{fontSize:12}]}>{p.name}</Text><Text style={[s.score,active&&{fontSize:31},inactive&&{fontSize:21}]}>{p.score}</Text></View>{active&&<View style={s.turnDot}/>}</View>{i===0&&<IconButton icon="time-outline" label="Historique des coups" onPress={()=>setHistoryOpen(true)}/>}</React.Fragment>;})}
+ {visiblePlayers.map((p,i)=>{const active=game?.current===i&&game?.status==='playing',inactive=game?.status==='playing'&&!active;return <React.Fragment key={i}><View style={[s.player,active&&s.active,inactive&&s.inactivePlayer]}><UserAvatar name={p.name} avatarUrl={p.avatarUrl} size={active?38:inactive?26:34}/><View style={s.playerDetails}><Text numberOfLines={1} style={[s.name,active&&{fontSize:16},inactive&&{fontSize:12}]}>{p.name}</Text><Text style={[s.score,active&&{fontSize:31},inactive&&{fontSize:21}]}>{p.score}</Text></View>{active&&<View style={s.turnDot}/>}</View>{i===0&&<IconButton icon={devActive?"flask-outline":"time-outline"} label={devActive?"Mode développeur actif":"Historique des coups"} onPress={()=>devActive?setDevOpen(true):setHistoryOpen(true)}/>}</React.Fragment>;})}
  </View>
  {game?<><View style={s.boardStage}>
  <View style={s.opponentZone} accessible accessibilityLabel={`${opponent?.name} : ${opponent?.rack.length??0} lettres restantes, faces cachées`}><View style={[s.opponentRack,{width:boardWidth}]}>{Array.from({length:opponent?.rack.length??0},(_,i)=><TileFace key={i} size={rackTileSize} back/>)}</View></View>
@@ -159,7 +192,7 @@ function GameScreen({onBack}:{onBack:()=>void}) {
   <View style={[s.dropTarget,{left:(hover%15)*cellSize-3,top:Math.floor(hover/15)*cellSize-3,width:cellSize+6,height:cellSize+6,borderColor:game.board[hover]||draft.some(p=>p.cell===hover&&p.rackIndex!==drag.index)?'#c5354f':'#4b0565',backgroundColor:game.board[hover]||draft.some(p=>p.cell===hover)?'#ffdde088':'#ffe69a99'}]}/>
  </View>}
  </View></View>
- <View style={[s.lastMoveZone,!lastTurn&&{flex:0,minHeight:8}]}>{lastTurn&&<Pressable accessibilityRole="button" accessibilityLabel="Dernier coup. Ouvrir l’historique" onPress={()=>setHistoryOpen(true)} style={s.lastMove}><Ionicons name={lastTurn.kind==='play'?'text-outline':lastTurn.kind==='pass'?'play-skip-forward-outline':'swap-horizontal-outline'} size={19} color={purple}/><Text numberOfLines={1} style={s.lastMoveText}>{game.players[lastTurn.player].name} · {lastTurn.kind==='play'?lastTurn.words.join(', '):lastTurn.kind==='pass'?'Passe':'Échange'}</Text>{lastTurn.kind==='play'&&<Text style={s.lastMoveScore}>+{lastTurn.score}</Text>}<Ionicons name="chevron-forward" size={15} color="#9b78b0"/></Pressable>}</View>
+ <View style={[s.lastMoveZone,!lastTurn&&{flex:0,minHeight:8}]}>{lastTurn&&<Pressable accessibilityRole="button" accessibilityLabel="Dernier coup. Ouvrir l’historique" onPress={()=>setHistoryOpen(true)} style={s.lastMove}><Ionicons name={lastTurn.kind==='play'?'text-outline':lastTurn.kind==='pass'?'play-skip-forward-outline':'swap-horizontal-outline'} size={19} color={purple}/><Text numberOfLines={1} style={s.lastMoveText}>{visiblePlayers[lastTurn.player].name} · {lastTurn.kind==='play'?lastTurn.words.join(', '):lastTurn.kind==='pass'?'Passe':'Échange'}</Text>{lastTurn.kind==='play'&&<Text style={s.lastMoveScore}>+{lastTurn.score}</Text>}<Ionicons name="chevron-forward" size={15} color="#9b78b0"/></Pressable>}</View>
  </View>
  <View style={s.bottom}>
  {playable?<><View testID="current-rack" ref={rackRef} collapsable={false} style={[s.rack,{width:boardWidth}]}>{order.filter(i=>i<rack.length).map((i,slot)=>exchange?<Pressable key={i} onPress={()=>select(i)} style={[s.exchangeTile,{width:rackTileSize,height:rackTileSize},exchangeSelection.includes(i)&&s.chosen]}><TileFace size={rackTileSize} letter={rack[i]} value={points[rack[i]]}/></Pressable>:<DraggableTile key={(used.has(i)?'placed-':'rack-')+i} size={rackTileSize} style={rackHover===slot?{backgroundColor:'#ffe69a',borderColor:'#ac743b'}:undefined} letter={used.has(i)?null:rack[i]} selected={selected===i} dragging={drag?.index===i} onStart={(x,y,grab)=>startDrag(i,x,y,grab)} onMove={moveDrag} onDrop={dropDrag} onCancel={cancelDrag} onSelect={()=>select(i)}/>)}</View></>:<View style={[s.hiddenRack,{width:boardWidth}]}>{Array.from({length:7},(_,i)=><TileFace key={i} size={rackTileSize} back/>)}</View>}
@@ -179,19 +212,30 @@ function GameScreen({onBack}:{onBack:()=>void}) {
  <Action icon="time-outline" label="Historique" onPress={()=>{setMenuOpen(false);setHistoryOpen(true);}}/>
  <Action icon="play-skip-forward-outline" label="Passer mon tour" disabled={!playable||!!draft.length} onPress={()=>{setMenuOpen(false);perform(()=>passTurn(game!));}}/>
  <Action icon="refresh-outline" label="Nouvelle partie" onPress={()=>{setMenuOpen(false);setConfirmNew(true);}}/>
+ <Action icon="flask-outline" label="Mode développeur" disabled={saving||!game} onPress={()=>{setMenuOpen(false);setDevOpen(true);}}/>
  <Action icon="information-circle-outline" label="Informations" onPress={()=>{setMenuOpen(false);setInfoOpen(true);}}/>
  </View></View></Modal>
- <Modal visible={historyOpen} transparent animationType="slide" onRequestClose={()=>setHistoryOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Historique</Text><IconButton icon="close-outline" label="Fermer l’historique" onPress={()=>setHistoryOpen(false)}/></View><ScrollView style={{maxHeight:420}}>{game?.history.length?[...game.history].reverse().map((t,i)=><View key={game.history.length-i} style={s.historyItem}><Ionicons name={t.kind==='play'?'text-outline':t.kind==='pass'?'play-skip-forward-outline':'swap-horizontal-outline'} size={22} color={purple}/><View style={{flex:1}}><Text style={s.name}>{game.players[t.player].name}</Text><Text style={s.subtitle}>{t.kind==='play'?t.words.join(', '):t.kind==='pass'?'Passe':'Échange'}</Text></View><Text style={s.name}>{t.kind==='play'?'+'+t.score:'—'}</Text></View>):<Text style={s.subtitle}>Aucun coup joué.</Text>}</ScrollView></View></View></Modal>
+ <Modal visible={historyOpen} transparent animationType="slide" onRequestClose={()=>setHistoryOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Historique</Text><IconButton icon="close-outline" label="Fermer l’historique" onPress={()=>setHistoryOpen(false)}/></View><ScrollView style={{maxHeight:420}}>{game?.history.length?[...game.history].reverse().map((t,i)=><View key={game.history.length-i} style={s.historyItem}><Ionicons name={t.kind==='play'?'text-outline':t.kind==='pass'?'play-skip-forward-outline':'swap-horizontal-outline'} size={22} color={purple}/><View style={{flex:1}}><Text style={s.name}>{visiblePlayers[t.player].name}</Text><Text style={s.subtitle}>{t.kind==='play'?t.words.join(', '):t.kind==='pass'?'Passe':'Échange'}</Text></View><Text style={s.name}>{t.kind==='play'?'+'+t.score:'—'}</Text></View>):<Text style={s.subtitle}>Aucun coup joué.</Text>}</ScrollView></View></View></Modal>
  <Modal visible={infoOpen} transparent animationType="fade" onRequestClose={()=>setInfoOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>La partie</Text><IconButton icon="close-outline" label="Fermer les informations" onPress={()=>setInfoOpen(false)}/></View><Text style={s.text}>{game?.bag.length??0} lettres dans le sac · {game?.passes??0}/6 passes consécutives.</Text><Text style={s.text}>Glissez les lettres pour jouer ou organiser le chevalet. Les deux flèches vers le bas reprennent votre brouillon ; les flèches croisées mélangent les lettres. L’échange utilise votre tour.</Text><Text style={s.subtitle}>Partie locale sauvegardée sur ce téléphone. Lexique familial Grammalecte 7.7 · {lexiconMetadata.count.toLocaleString('fr-FR')} mots · MPL 2.0 · différent de l’ODS.</Text></View></View></Modal>
- <Modal visible={!!game&&game.status==='playing'&&!revealed&&!saving&&!menuOpen&&!historyOpen&&!infoOpen&&!confirmNew} transparent animationType="fade" onRequestClose={onBack}><View style={s.backdrop}><View style={s.handoff}><Ionicons name="phone-portrait-outline" size={38} color={purple}/><Text style={s.title}>{game?.players[game.current].name}</Text><IconButton primary icon="eye-outline" label="Découvrir mon chevalet" onPress={()=>setRevealed(true)}/><IconButton icon="home-outline" label="Retour à l’accueil" onPress={onBack}/></View></View></Modal>
- <Modal visible={game?.status==='finished'&&!resultDismissed} transparent animationType="fade" onRequestClose={()=>setResultDismissed(true)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Ionicons name="trophy-outline" size={36} color={purple}/><IconButton icon="close-outline" label="Fermer le résultat" onPress={()=>setResultDismissed(true)}/></View><Text style={s.title}>Partie terminée</Text><Text style={s.text}>{game&&(game.players[0].score===game.players[1].score?'Égalité !':game.players[game.players[0].score>game.players[1].score?0:1].name+' remporte la partie !')}</Text><Text style={s.subtitle}>Les reliquats ont été décomptés.</Text></View></View></Modal>
+ <Modal visible={!!game&&game.status==='playing'&&!revealed&&!saving&&!menuOpen&&!historyOpen&&!infoOpen&&!confirmNew&&!devOpen&&!celebration} transparent animationType="fade" onRequestClose={onBack}><View style={s.backdrop}><View style={s.handoff}><Ionicons name="phone-portrait-outline" size={38} color={purple}/><Text style={s.title}>{visiblePlayers[game?.current??0]?.name}</Text><IconButton primary icon="eye-outline" label="Découvrir mon chevalet" onPress={()=>setRevealed(true)}/><IconButton icon="home-outline" label="Retour à l’accueil" onPress={onBack}/></View></View></Modal>
+ <Modal visible={game?.status==='finished'&&!resultDismissed&&!celebration&&!devOpen} transparent animationType="fade" onRequestClose={()=>setResultDismissed(true)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Ionicons name="trophy-outline" size={36} color={purple}/><IconButton icon="close-outline" label="Fermer le résultat" onPress={()=>setResultDismissed(true)}/></View><Text style={s.title}>Partie terminée</Text><Text style={s.text}>{game&&(visiblePlayers[0].score===visiblePlayers[1].score?'Égalité !':visiblePlayers[visiblePlayers[0].score>visiblePlayers[1].score?0:1].name+' remporte la partie !')}</Text><Text style={s.subtitle}>Les reliquats ont été décomptés.</Text></View></View></Modal>
  <Modal visible={!!error} transparent animationType="fade" onRequestClose={()=>setError('')}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Ionicons name="alert-circle-outline" size={30} color="#b02b4a"/><IconButton icon="close-outline" label="Fermer l’erreur" onPress={()=>setError('')}/></View><Text style={s.text}>{error}</Text>{!game&&<Action icon="refresh-outline" label="Nouvelle partie" onPress={()=>{setError('');setConfirmNew(true);}}/>}</View></View></Modal>
+ <Modal visible={devOpen} transparent animationType="fade" onRequestClose={()=>setDevOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Mode développeur</Text><IconButton icon="close-outline" label="Fermer le mode développeur" onPress={()=>setDevOpen(false)}/></View><Text style={s.subtitle}>Tests temporaires. Votre partie et sa sauvegarde sont conservées.</Text><ScrollView style={{maxHeight:400}} contentContainerStyle={{gap:10}}>
+ <Action icon="remove-outline" label="Fin : égalité (200 / 200)" onPress={()=>loadDevScenario('tie')}/>
+ <Action icon="trophy-outline" label="Fin : J1 gagne (240 / 200)" onPress={()=>loadDevScenario('player1-wins')}/>
+ <Action icon="trophy-outline" label="Fin : J2 gagne (200 / 240)" onPress={()=>loadDevScenario('player2-wins')}/>
+ <Action icon="text-outline" label="Scrabble : sept lettres à poser" onPress={()=>loadDevScenario('scrabble-rack')}/>
+ <Action icon="paper-plane-outline" label="Scrabble : prêt à valider (66 pts)" onPress={()=>loadDevScenario('scrabble-ready')}/>
+ {devActive&&<Action icon="arrow-undo-outline" label="Revenir à ma partie" onPress={leaveDevMode}/>}
+ </ScrollView></View></View></Modal>
+ <Modal visible={celebration!==null} transparent animationType="fade" onRequestClose={()=>setCelebration(null)}><View style={s.backdrop}><View style={s.handoff}><Ionicons name="sparkles" size={48} color="#a16a30"/><Text style={s.title}>Scrabble !</Text><Text style={s.bonusValue}>+50</Text><Text style={s.subtitle}>Bonus sept lettres · {celebration?.score} points au total</Text><IconButton primary icon="checkmark-outline" label="Continuer après le Scrabble" onPress={()=>setCelebration(null)}/></View></View></Modal>
  <Modal visible={feedbackDetails&&preview!==null} transparent animationType="fade" onRequestClose={()=>setFeedbackDetails(false)}><View style={s.backdrop}><View style={s.modal}><Text style={s.title}>{preview?.valid?'Détail du coup':'Coup invalide'}</Text>{preview?.valid?<><Text style={s.text}>{preview.words.map(w=>w.word+' : '+w.score+' points').join('\n')}{draft.length===7?'\nBonus sept lettres : 50 points':''}</Text><Text style={s.name}>Total : {preview.score} points</Text></>:<Text style={s.text}>{preview?.reason}</Text>}<Action icon="close-outline" label="Fermer" onPress={()=>setFeedbackDetails(false)}/></View></View></Modal>
  <Modal visible={joker!==null} transparent animationType="fade" onRequestClose={()=>setJoker(null)}><View style={s.backdrop}><View style={s.modal}><Text style={s.title}>Quelle lettre représente le joker ?</Text><Text style={s.subtitle}>Il gardera cette lettre et vaudra zéro point.</Text><View style={s.alphabet}>{'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(letter=><Pressable accessibilityRole="button" accessibilityLabel={`Joker ${letter}`} key={letter} onPress={()=>{if(joker)setDraft(d=>[...d,{...joker,letter}]);setJoker(null);setSelected(null);}} style={s.alphabetKey}><Text style={s.name}>{letter}</Text></Pressable>)}</View><Action icon="close-outline" label="Annuler" onPress={()=>setJoker(null)}/></View></View></Modal>
- <Modal visible={confirmNew} transparent animationType="fade" onRequestClose={()=>setConfirmNew(false)}><View style={s.backdrop}><View style={s.modal}><Text style={s.title}>Recommencer une partie ?</Text><Text style={s.text}>La partie locale enregistrée sera remplacée.</Text><Action icon="refresh-outline" label="Recommencer" onPress={()=>{setConfirmNew(false);void commit(createGame(['Joueur 1','Joueur 2'],lexicon.id));}}/><Action icon="close-outline" label="Conserver ma partie" onPress={()=>setConfirmNew(false)}/></View></View></Modal>
+ <Modal visible={confirmNew} transparent animationType="fade" onRequestClose={()=>setConfirmNew(false)}><View style={s.backdrop}><View style={s.modal}><Text style={s.title}>Recommencer une partie ?</Text><Text style={s.text}>{devActive?'Le scénario de test sera remplacé.':'La partie locale enregistrée sera remplacée.'}</Text><Action icon="refresh-outline" label="Recommencer" onPress={()=>{setConfirmNew(false);void commit(createProfileGame(participantSnapshot.current,lexicon.id));}}/><Action icon="close-outline" label="Conserver ma partie" onPress={()=>setConfirmNew(false)}/></View></View></Modal>
  </View></ScrollView></SafeAreaView>;
 }
 const s=StyleSheet.create({
+ devBadge:{position:'absolute',top:0,right:4,zIndex:10,backgroundColor:'#815133',borderRadius:5,paddingHorizontal:5,paddingVertical:2},devBadgeText:{fontSize:9,fontWeight:'800',color:'white'},bonusValue:{fontSize:48,fontWeight:'800',color:'#815133'},
  safe:{flex:1,backgroundColor:'#e9d9f3'},root:{flex:1,width:'100%',alignSelf:'center',backgroundColor:'#f3eafa'},flowers:{position:'absolute',bottom:80,left:0,width:170,height:270,opacity:.18},
  header:{height:86,flexDirection:'row',alignItems:'center',paddingHorizontal:8,gap:2,backgroundColor:'#e9d9f3'},player:{flex:1,minWidth:0,flexDirection:'row',alignItems:'center',gap:7,paddingVertical:9,paddingHorizontal:6,borderRadius:20,borderWidth:2,borderColor:'transparent'},active:{flex:1.5,backgroundColor:'#fff9ff',borderColor:'#b38dcc'},inactivePlayer:{flex:.75,paddingVertical:6,gap:5,opacity:.72},activeAvatar:{width:38,height:38,borderRadius:19},inactiveAvatar:{width:26,height:26,borderRadius:13},playerDetails:{flex:1,minWidth:0},avatar:{width:34,height:34,borderRadius:17,backgroundColor:'#d5bce6',alignItems:'center',justifyContent:'center'},avatarText:{fontSize:17,fontWeight:'700',color:purple},turnDot:{position:'absolute',right:9,bottom:9,width:7,height:7,borderRadius:4,backgroundColor:'#4d9d6e'},name:{fontSize:15,fontWeight:'700',color:purple},score:{fontSize:27,fontWeight:'800',color:purple},
  boardStage:{flex:1,alignItems:'center'},opponentZone:{flex:1,minHeight:56,width:'100%',paddingHorizontal:0,justifyContent:'center',alignItems:'center'},opponentRack:{alignSelf:'center',flexDirection:'row',justifyContent:'center',gap:4,padding:4},opponentTile:{height:50,borderRadius:5,borderWidth:1,borderColor:'#d2bbdf',backgroundColor:'#e8dcf0',justifyContent:'center',alignItems:'center'},boardFrame:{paddingTop:8},lastMoveZone:{flex:1,minHeight:52,width:'100%',justifyContent:'center',alignItems:'center',paddingHorizontal:22,paddingVertical:12},lastMove:{flexDirection:'row',alignItems:'center',gap:7,borderRadius:16,paddingVertical:5,paddingHorizontal:10,backgroundColor:'#ffffff99',maxWidth:'100%'},lastMoveText:{flexShrink:1,fontSize:12,color:'#775686'},lastMoveScore:{fontSize:13,fontWeight:'800',color:purple},board:{position:'relative',backgroundColor:'white',borderRadius:6},cell:{position:'absolute',borderRadius:3,alignItems:'center',justifyContent:'center'},boardPoints:{position:'absolute',right:1,bottom:0,color:purple,fontWeight:'700',lineHeight:10},wordOutline:{position:'absolute',borderWidth:2,borderRadius:5},scoreBadge:{position:'absolute',minWidth:72,height:27,paddingHorizontal:8,borderRadius:14,alignItems:'center',justifyContent:'center',zIndex:8,elevation:3},scoreBadgeText:{color:'white',fontSize:13,fontWeight:'800'},targetLayer:{position:'absolute',left:0,top:0,right:0,bottom:0,zIndex:20},dropTarget:{position:'absolute',borderWidth:3,borderRadius:6,shadowColor:purple,shadowOpacity:.5,shadowRadius:5,elevation:4},
@@ -199,13 +243,3 @@ const s=StyleSheet.create({
  dragTile:{position:'absolute',top:0,left:0,width:80,height:80,borderRadius:9,backgroundColor:'transparent',justifyContent:'center',alignItems:'center',elevation:12,zIndex:100,opacity:.7},rackLetter:{fontSize:27,fontWeight:'700',color:purple},points:{position:'absolute',right:4,bottom:2,fontSize:10,color:purple},exchangeTile:{flexShrink:0,borderRadius:8,backgroundColor:'transparent',justifyContent:'center',alignItems:'center'},chosen:{backgroundColor:'#b48bcb55',transform:[{translateY:-5}]},
  loading:{flex:1,alignItems:'center',justifyContent:'center'},backdrop:{flex:1,backgroundColor:'#25103799',justifyContent:'center',padding:20},modal:{maxHeight:'85%',backgroundColor:'#fff9ff',padding:20,borderRadius:24,gap:14},handoff:{alignSelf:'center',alignItems:'center',minWidth:220,padding:28,gap:18,borderRadius:28,backgroundColor:'#fff9ff'},row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:10},title:{fontSize:22,fontWeight:'700',color:purple},text:{fontSize:15,color:purple,lineHeight:22},subtitle:{fontSize:13,color:'#756b81',lineHeight:20},action:{flexDirection:'row',alignItems:'center',gap:12,padding:13,minHeight:48,borderRadius:14,backgroundColor:'#eee3f6'},actionText:{fontSize:15,color:purple,fontWeight:'600'},historyItem:{flexDirection:'row',alignItems:'center',gap:12,paddingVertical:12,borderBottomWidth:1,borderBottomColor:'#e8dced'},alphabet:{flexDirection:'row',flexWrap:'wrap',gap:8},alphabetKey:{width:44,height:44,backgroundColor:'#ebdef5',borderRadius:8,justifyContent:'center',alignItems:'center'},
 });
-
-
-
-
-
-
-
-
-
-

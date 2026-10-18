@@ -1,6 +1,6 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),ts=require('typescript');
 test('game screen emits no raw text children outside native Text',()=>{
- for(const name of ['LocalGame.tsx','DraggableTile.tsx','TileFace.tsx']){
+ for(const name of ['LocalGame.tsx','DraggableTile.tsx','TileFace.tsx','UserAvatar.tsx','../App.tsx']){
  const file=path.join(__dirname,'../src',name);
  const js=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
  const ast=ts.createSourceFile('game.js',js,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
@@ -21,6 +21,3 @@ test('game screen emits no raw text children outside native Text',()=>{
  visit(ast);assert.ok(checked>(name==='LocalGame.tsx'?20:0),'JSX calls must actually be inspected: '+name);assert.deepEqual(failures,[],'Raw text emitted outside Text: '+failures.join('; '));
 }
 });
-
-
-

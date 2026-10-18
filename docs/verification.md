@@ -71,3 +71,19 @@ Lettre et valeur sont ajoutées dynamiquement en brun, avec typographie serif gr
 Face avant remplacée par le nouveau PNG fourni, sous assets/tile-front-v2.png pour renouveler la référence de cache native. Récupération centralisée pour le bouton, le toucher et le dépôt au chevalet ; sélection, joker en attente et état de déplacement nettoyés. Les cases du chevalet sont remontées lorsqu’elles passent de vide à occupé pour réinitialiser leurs vues et leurs gestionnaires natifs.
 
 La position du chevalet est remesurée au relâchement, avec protection contre les callbacks d’un geste ancien. Un test de rendu React a reproduit un échec du dépôt lorsque le chevalet change de position après la prise, puis vérifié sa correction. Il couvre aussi le bouton de récupération et le toucher d’une lettre du brouillon. 42 tests passent ; TypeScript et lint réussis. Ce test simule les vues et mesures natives ; le comportement sur le téléphone reste à confirmer.
+
+## Scénarios développeur
+
+Scénarios temporaires accessibles dans le menu : trois résultats de fin avec le moteur de passes et le décompte réel des reliquats, et deux scénarios MAISONS (à poser / prêt à valider) utilisant les 102 lettres et le vrai lexique. Résultat attendu du Scrabble : 16 + 50 = 66 points. Fenêtre de célébration après validation des sept lettres.
+
+48 tests passent, dont cinq tests de scénarios et un test de rendu vérifiant qu’un Scrabble développeur ne provoque aucune écriture de sauvegarde, puis restaure la partie et son brouillon. TypeScript et lint réussis ; bundle Android exporté. Vérification visuelle des fenêtres à effectuer dans Expo Go.
+
+## API, authentification et profils
+
+API Express / Supabase ajoutée avec login, refresh, logout, profil, avatars privés, liste des joueurs, création admin d’utilisateurs ordinaires et réinitialisation admin des mots de passe. Migration SQL des profils avec RLS et bucket privé. Seed admin local sans identifiant/mot de passe par défaut, idempotent et sans promotion automatique. Créations Auth compensées si le profil échoue.
+
+Mobile connecté à l’API : suppression du contournement de connexion factice, token de renouvellement uniquement dans SecureStore, renouvellement sérialisé, protection contre une réponse tardive après déconnexion, édition du profil/avatar et formulaire d’ajout de comptes réservé à l’admin. Les noms/avatars viennent des comptes et les parties locales sont isolées par paire d’identifiants.
+
+Tests API HTTP avec service simulé et tests du service Supabase avec fournisseur simulé. Tests mobile ajoutés pour sessions/expiration/réseau, identité des joueurs et isolation des sauvegardes. Aucune validation réelle des clés, de la migration ou du seed Supabase n’a été possible : le projet distant n’existe pas encore. Guide de configuration dans api/README.md. Le SMTP d’Alexandrya et ses secrets n’ont pas été copiés.
+
+Résultat final de cette étape : 13 tests API et 57 tests mobile réussis. Syntaxe API, TypeScript et lint mobile validés ; export Android compilé. Les tests de services utilisent des doublures et ne remplacent pas la mise en service Supabase réelle.

@@ -2,7 +2,7 @@
 import { bonusAt, distribution, points } from './board';
 export type Tile = { letter: string; blank: boolean };
 export type Placement = { cell: number; rackIndex: number; letter: string };
-export type Player = { name: string; rack: string[]; score: number };
+export type Player = { userId?:string; avatarUrl?:string|null; name: string; rack: string[]; score: number };
 export type Turn = { player: number; kind: 'play' | 'pass' | 'exchange'; words: string[]; score: number };
 export type Game = {
  version: 1; lexiconId: string; board: (Tile | null)[]; players: Player[]; bag: string[];
