@@ -140,9 +140,17 @@ stages:
                   test -x "$JAVA_HOME/bin/java" || { echo 'Run deploy/android/setup-agent.sh first.'; exit 1; }
                   test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" || { echo 'Android SDK is missing.'; exit 1; }
                   export PATH="$JAVA_HOME/bin:$PATH"
-                  "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" \
+                  timeout 25m "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" </dev/null \
                     'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
+                  for component in 'platform-tools/adb' 'platforms/android-36/android.jar' 'build-tools/36.0.0/apksigner' 'ndk/27.1.12297006/source.properties' 'cmake/3.22.1/bin/cmake'; do
+                    test -f "$ANDROID_HOME/$component" || {
+                      echo "Android SDK incomplete: $component is missing."
+                      echo 'Review and accept SDK licenses in SSH as azagent using sdkmanager --licenses, then retry.'
+                      exit 1
+                    }
+                  done
                 displayName: Verify Java and install required Android SDK packages
+                timeoutInMinutes: 30
                 env:
                   JAVA_HOME: $(androidJavaHome)
                   ANDROID_HOME: $(androidSdkRoot)
