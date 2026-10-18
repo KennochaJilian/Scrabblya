@@ -12,6 +12,7 @@ import { cellsRectangle, moveFeedback } from './moveFeedback';
 import { DraggableTile } from './DraggableTile';
 import { TileFace } from './TileFace';
 import { UserAvatar } from './UserAvatar';
+import type { GameCommand } from './onlineTypes';
 import type { PublicUser } from './apiClient';
 import { bindProfiles, createProfileGame, profileGameKey } from './playerProfiles';
 import { createDevScenario, DevScenario } from './devScenarios';
@@ -27,14 +28,16 @@ function IconButton({icon,label,onPress,disabled=false,primary=false,count}:{ico
 function Action({label,onPress,disabled=false,icon='checkmark-outline'}:{label:string;onPress:()=>void;disabled?:boolean;icon?:IconName}) {
  return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[s.action,disabled&&{opacity:.35}]}><Ionicons name={icon} size={22} color={purple}/><Text style={s.actionText}>{label}</Text></Pressable>;
 }
-type GameProps={onBack:()=>void;participants?:PublicUser[]};
-export function LocalGame({onBack,participants}:GameProps) {
- return <SafeAreaProvider><GameScreen onBack={onBack} participants={participants}/></SafeAreaProvider>;
+type GameProps={onBack:()=>void;participants?:PublicUser[];remote?:{game:Game;viewerId:string;onAction:(command:GameCommand)=>Promise<Game>}};
+export function LocalGame({onBack,participants,remote}:GameProps) {
+ return <SafeAreaProvider><GameScreen onBack={onBack} participants={participants} remote={remote}/></SafeAreaProvider>;
 }
-function GameScreen({onBack,participants}:GameProps) {
+function GameScreen({onBack,participants,remote}:GameProps) {
  const participantSnapshot=useRef(participants);
  const storageKey=profileGameKey(participants);
- const [game,setGame]=useState<Game|null>(null),[error,setError]=useState(''),[saving,setSaving]=useState(false),[revealed,setRevealed]=useState(false);
+ const online=!!remote,remoteGame=remote?.game;
+ const [previousRemoteGame,setPreviousRemoteGame]=useState(remoteGame);
+ const [game,setGame]=useState<Game|null>(remoteGame??null),[error,setError]=useState(''),[saving,setSaving]=useState(false),[revealed,setRevealed]=useState(false);
  const [draft,setDraft]=useState<Placement[]>([]),[selected,setSelected]=useState<number|null>(null);
  const [exchange,setExchange]=useState(false),[exchangeSelection,setExchangeSelection]=useState<number[]>([]);
  const [joker,setJoker]=useState<{cell:number;rackIndex:number}|null>(null),[confirmNew,setConfirmNew]=useState(false);
@@ -51,6 +54,7 @@ function GameScreen({onBack,participants}:GameProps) {
  const insets=useSafeAreaInsets();
  const {width,height}=useWindowDimensions(),boardWidth=Math.max(0,width-insets.left-insets.right-2),cellSize=boardWidth/15,rackTileSize=Math.max(20,(boardWidth-32)/7);
  useEffect(()=>{
+  if(online)return;
   let cancelled=false;
   saveQueue.then(()=>AsyncStorage.getItem(storageKey)).then(raw=>{
    if(cancelled)return;
@@ -65,12 +69,16 @@ function GameScreen({onBack,participants}:GameProps) {
    }
   }).catch(()=>{if(!cancelled)setError('Impossible de lire la sauvegarde. Vous pouvez démarrer une nouvelle partie.');});
   return ()=>{cancelled=true;};
- },[storageKey]);
+ },[storageKey,online]);
+ // Reset a stale draft only when a newer server snapshot arrives.
+ if(remoteGame&&remoteGame!==previousRemoteGame){
+  setPreviousRemoteGame(remoteGame);setGame(remoteGame);setDraft([]);setSelected(null);setExchange(false);setExchangeSelection([]);setOrder([0,1,2,3,4,5,6]);setRevealed(true);setResultDismissed(false);
+ }
  // All writes are serialized, including writes from a previously unmounted screen.
  async function commit(next:Game){
   setSaving(true);setError('');
-  const write=devActive?Promise.resolve():saveQueue.then(()=>AsyncStorage.setItem(storageKey,JSON.stringify(next)));
-  if(!devActive)saveQueue=write.catch(()=>{});
+  const write=devActive||remote?Promise.resolve():saveQueue.then(()=>AsyncStorage.setItem(storageKey,JSON.stringify(next)));
+  if(!devActive&&!remote)saveQueue=write.catch(()=>{});
   try{await write;
    if(draft.length===7&&next.history.length>0&&next.history[next.history.length-1].kind==='play')setCelebration({score:next.history[next.history.length-1].score});
    setResultDismissed(false);setGame(next);setDraft([]);setSelected(null);setExchange(false);setExchangeSelection([]);setRevealed(false);setOrder([0,1,2,3,4,5,6]);}
@@ -80,11 +88,12 @@ function GameScreen({onBack,participants}:GameProps) {
  const preview=useMemo(()=>game?moveFeedback(game,draft,lexicon):null,[game,draft]);
  const mainOutline=preview?.outlines[0];
  const mainRect=mainOutline?cellsRectangle(mainOutline,cellSize):null;
- const playable=!!game&&game.status==='playing'&&revealed&&!saving;
- const rack=game?.players[game.current].rack??[];
+ const viewer=remote?game?.players.findIndex(p=>p.userId===remote.viewerId)??-1:game?.current??0;
+ const playable=!!game&&game.status==='playing'&&(remote?viewer===game.current:revealed)&&!saving;
+ const rack=game?.players[viewer]?.rack??[];
  const used=new Set(draft.map(p=>p.rackIndex));
  const visiblePlayers=game?(devActive?game.players:bindProfiles(game,participants).players):[];
- const opponent=game?visiblePlayers[1-game.current]:undefined;
+ const opponent=game?visiblePlayers[1-viewer]:undefined;
  const lastTurn=game?.history[game.history.length-1];
  function cancelDrag(){dragRef.current=null;setDrag(null);setDragReady(false);setHover(null);setRackHover(null);}
  function moveDrag(x:number,y:number){
@@ -168,7 +177,13 @@ function GameScreen({onBack,participants}:GameProps) {
   cancelDrag();setGame(backup.game);setDraft(backup.draft);setOrder(backup.order);setRevealed(backup.revealed);
   setDevActive(false);setDevOpen(false);setMenuOpen(false);setSelected(null);setExchange(false);setExchangeSelection([]);setJoker(null);setError('');setFeedbackDetails(false);setCelebration(null);setResultDismissed(false);devBackup.current=null;
  }
- function perform(action:()=>Game){try{void commit(action());}catch(e){setError((e as Error).message);}}
+ function perform(action:()=>Game,command?:GameCommand){
+  if(remote){
+   if(!command||!playable)return;
+   setSaving(true);setError('');
+   remote.onAction(command).then(next=>commit(next)).catch(e=>setError((e as Error).message)).finally(()=>setSaving(false));
+  }else try{void commit(action());}catch(e){setError((e as Error).message);}
+ }
  return <SafeAreaView edges={['top','bottom','left','right']} style={s.safe}><ScrollView scrollEnabled={!drag} showsVerticalScrollIndicator={false} contentContainerStyle={{flexGrow:1}}><View testID="game-root" ref={rootRef} collapsable={false} style={[s.root,{minHeight:Math.max(height-insets.top-insets.bottom,boardWidth+349)}]}><StatusBar style="dark"/>
  <Image accessible={false} source={require('../assets/floral-corner-left.png')} style={s.flowers}/>
  {devActive&&<View style={s.devBadge}><Text style={s.devBadgeText}>DEV</Text></View>}
@@ -194,13 +209,14 @@ function GameScreen({onBack,participants}:GameProps) {
  </View></View>
  <View style={[s.lastMoveZone,!lastTurn&&{flex:0,minHeight:8}]}>{lastTurn&&<Pressable accessibilityRole="button" accessibilityLabel="Dernier coup. Ouvrir l’historique" onPress={()=>setHistoryOpen(true)} style={s.lastMove}><Ionicons name={lastTurn.kind==='play'?'text-outline':lastTurn.kind==='pass'?'play-skip-forward-outline':'swap-horizontal-outline'} size={19} color={purple}/><Text numberOfLines={1} style={s.lastMoveText}>{visiblePlayers[lastTurn.player].name} · {lastTurn.kind==='play'?lastTurn.words.join(', '):lastTurn.kind==='pass'?'Passe':'Échange'}</Text>{lastTurn.kind==='play'&&<Text style={s.lastMoveScore}>+{lastTurn.score}</Text>}<Ionicons name="chevron-forward" size={15} color="#9b78b0"/></Pressable>}</View>
  </View>
+ {!playable&&remote&&game.status==='playing'&&<Text accessibilityLiveRegion="polite" style={{textAlign:'center',color:purple,padding:6}}>Au tour de {visiblePlayers[game.current].name}</Text>}
  <View style={s.bottom}>
- {playable?<><View testID="current-rack" ref={rackRef} collapsable={false} style={[s.rack,{width:boardWidth}]}>{order.filter(i=>i<rack.length).map((i,slot)=>exchange?<Pressable key={i} onPress={()=>select(i)} style={[s.exchangeTile,{width:rackTileSize,height:rackTileSize},exchangeSelection.includes(i)&&s.chosen]}><TileFace size={rackTileSize} letter={rack[i]} value={points[rack[i]]}/></Pressable>:<DraggableTile key={(used.has(i)?'placed-':'rack-')+i} size={rackTileSize} style={rackHover===slot?{backgroundColor:'#ffe69a',borderColor:'#ac743b'}:undefined} letter={used.has(i)?null:rack[i]} selected={selected===i} dragging={drag?.index===i} onStart={(x,y,grab)=>startDrag(i,x,y,grab)} onMove={moveDrag} onDrop={dropDrag} onCancel={cancelDrag} onSelect={()=>select(i)}/>)}</View></>:<View style={[s.hiddenRack,{width:boardWidth}]}>{Array.from({length:7},(_,i)=><TileFace key={i} size={rackTileSize} back/>)}</View>}
+ {playable||remote?<><View testID="current-rack" ref={rackRef} collapsable={false} style={[s.rack,{width:boardWidth}]}>{order.filter(i=>i<rack.length).map((i,slot)=>exchange?<Pressable key={i} onPress={()=>select(i)} style={[s.exchangeTile,{width:rackTileSize,height:rackTileSize},exchangeSelection.includes(i)&&s.chosen]}><TileFace size={rackTileSize} letter={rack[i]} value={points[rack[i]]}/></Pressable>:<DraggableTile key={(used.has(i)?'placed-':'rack-')+i} size={rackTileSize} style={rackHover===slot?{backgroundColor:'#ffe69a',borderColor:'#ac743b'}:undefined} letter={used.has(i)?null:rack[i]} selected={selected===i} dragging={drag?.index===i} onStart={(x,y,grab)=>startDrag(i,x,y,grab)} onMove={moveDrag} onDrop={dropDrag} onCancel={cancelDrag} onSelect={()=>select(i)}/>)}</View></>:<View style={[s.hiddenRack,{width:boardWidth}]}>{Array.from({length:7},(_,i)=><TileFace key={i} size={rackTileSize} back/>)}</View>}
  <View style={s.toolbar}>
  <View style={s.toolbarSide}><IconButton icon="menu-outline" label="Menu de la partie" disabled={saving} onPress={()=>setMenuOpen(true)}/>
  <IconButton icon={exchange?'close-outline':'recover-tiles'} label={exchange?'Annuler l’échange':'Reprendre toutes les lettres'} disabled={!playable||(!exchange&&!draft.length)} onPress={()=>{if(exchange){setExchange(false);setExchangeSelection([]);}else recoverDraft();}}/>
  </View>
- {saving?<View style={s.primaryButton}><ActivityIndicator color="white"/></View>:<IconButton primary icon={game.status==='finished'?'trophy-outline':exchange?'checkmark-outline':'paper-plane-outline'} label={game.status==='finished'?'Résultat de la partie':exchange?'Confirmer l’échange':'Valider le mot'} count={exchange?exchangeSelection.length:undefined} disabled={game.status!=='finished'&&(!playable||(exchange?!exchangeSelection.length:!preview?.valid))} onPress={()=>{if(game.status==='finished')setResultDismissed(false);else perform(()=>exchange?exchangeTiles(game,exchangeSelection):playMove(game,draft,lexicon));}}/>}
+ {saving?<View style={s.primaryButton}><ActivityIndicator color="white"/></View>:<IconButton primary icon={game.status==='finished'?'trophy-outline':exchange?'checkmark-outline':'paper-plane-outline'} label={game.status==='finished'?'Résultat de la partie':exchange?'Confirmer l’échange':'Valider le mot'} count={exchange?exchangeSelection.length:undefined} disabled={game.status!=='finished'&&(!playable||(exchange?!exchangeSelection.length:!preview?.valid))} onPress={()=>{if(game.status==='finished')setResultDismissed(false);else perform(()=>exchange?exchangeTiles(game,exchangeSelection):playMove(game,draft,lexicon),exchange?{kind:'exchange',indices:exchangeSelection}:{kind:'play',placements:draft});}}/>}
  <View style={s.toolbarSide}><IconButton icon="shuffle-outline" label="Mélanger le chevalet" disabled={!playable||!!draft.length||exchange} onPress={()=>{setOrder(shuffle(order));setSelected(null);}}/>
  <IconButton icon="swap-horizontal-outline" label="Choisir les lettres à échanger" disabled={!playable||!!draft.length||game.bag.length<7||exchange} onPress={()=>{setExchange(true);setSelected(null);}}/>
  <IconButton icon="bag-handle-outline" label={game.bag.length+' lettres restantes dans le sac'} count={game.bag.length} onPress={()=>setInfoOpen(true)}/>
@@ -210,14 +226,14 @@ function GameScreen({onBack,participants}:GameProps) {
  <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={()=>setMenuOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Scrabblya</Text><IconButton icon="close-outline" label="Fermer le menu" onPress={()=>setMenuOpen(false)}/></View>
  <Action icon="home-outline" label="Accueil" onPress={()=>{setMenuOpen(false);onBack();}}/>
  <Action icon="time-outline" label="Historique" onPress={()=>{setMenuOpen(false);setHistoryOpen(true);}}/>
- <Action icon="play-skip-forward-outline" label="Passer mon tour" disabled={!playable||!!draft.length} onPress={()=>{setMenuOpen(false);perform(()=>passTurn(game!));}}/>
- <Action icon="refresh-outline" label="Nouvelle partie" onPress={()=>{setMenuOpen(false);setConfirmNew(true);}}/>
- <Action icon="flask-outline" label="Mode développeur" disabled={saving||!game} onPress={()=>{setMenuOpen(false);setDevOpen(true);}}/>
+ <Action icon="play-skip-forward-outline" label="Passer mon tour" disabled={!playable||!!draft.length} onPress={()=>{setMenuOpen(false);perform(()=>passTurn(game!),{kind:'pass'});}}/>
+ {!remote&&<Action icon="refresh-outline" label="Nouvelle partie" onPress={()=>{setMenuOpen(false);setConfirmNew(true);}}/>}
+ {!remote&&<Action icon="flask-outline" label="Mode développeur" disabled={saving||!game} onPress={()=>{setMenuOpen(false);setDevOpen(true);}}/>}
  <Action icon="information-circle-outline" label="Informations" onPress={()=>{setMenuOpen(false);setInfoOpen(true);}}/>
  </View></View></Modal>
  <Modal visible={historyOpen} transparent animationType="slide" onRequestClose={()=>setHistoryOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Historique</Text><IconButton icon="close-outline" label="Fermer l’historique" onPress={()=>setHistoryOpen(false)}/></View><ScrollView style={{maxHeight:420}}>{game?.history.length?[...game.history].reverse().map((t,i)=><View key={game.history.length-i} style={s.historyItem}><Ionicons name={t.kind==='play'?'text-outline':t.kind==='pass'?'play-skip-forward-outline':'swap-horizontal-outline'} size={22} color={purple}/><View style={{flex:1}}><Text style={s.name}>{visiblePlayers[t.player].name}</Text><Text style={s.subtitle}>{t.kind==='play'?t.words.join(', '):t.kind==='pass'?'Passe':'Échange'}</Text></View><Text style={s.name}>{t.kind==='play'?'+'+t.score:'—'}</Text></View>):<Text style={s.subtitle}>Aucun coup joué.</Text>}</ScrollView></View></View></Modal>
- <Modal visible={infoOpen} transparent animationType="fade" onRequestClose={()=>setInfoOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>La partie</Text><IconButton icon="close-outline" label="Fermer les informations" onPress={()=>setInfoOpen(false)}/></View><Text style={s.text}>{game?.bag.length??0} lettres dans le sac · {game?.passes??0}/6 passes consécutives.</Text><Text style={s.text}>Glissez les lettres pour jouer ou organiser le chevalet. Les deux flèches vers le bas reprennent votre brouillon ; les flèches croisées mélangent les lettres. L’échange utilise votre tour.</Text><Text style={s.subtitle}>Partie locale sauvegardée sur ce téléphone. Lexique familial Grammalecte 7.7 · {lexiconMetadata.count.toLocaleString('fr-FR')} mots · MPL 2.0 · différent de l’ODS.</Text></View></View></Modal>
- <Modal visible={!!game&&game.status==='playing'&&!revealed&&!saving&&!menuOpen&&!historyOpen&&!infoOpen&&!confirmNew&&!devOpen&&!celebration} transparent animationType="fade" onRequestClose={onBack}><View style={s.backdrop}><View style={s.handoff}><Ionicons name="phone-portrait-outline" size={38} color={purple}/><Text style={s.title}>{visiblePlayers[game?.current??0]?.name}</Text><IconButton primary icon="eye-outline" label="Découvrir mon chevalet" onPress={()=>setRevealed(true)}/><IconButton icon="home-outline" label="Retour à l’accueil" onPress={onBack}/></View></View></Modal>
+ <Modal visible={infoOpen} transparent animationType="fade" onRequestClose={()=>setInfoOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>La partie</Text><IconButton icon="close-outline" label="Fermer les informations" onPress={()=>setInfoOpen(false)}/></View><Text style={s.text}>{game?.bag.length??0} lettres dans le sac · {game?.passes??0}/6 passes consécutives.</Text><Text style={s.text}>Glissez les lettres pour jouer ou organiser le chevalet. Les deux flèches vers le bas reprennent votre brouillon ; les flèches croisées mélangent les lettres. L’échange utilise votre tour.</Text><Text style={s.subtitle}>{remote?'Partie sauvegardée en ligne.':'Partie locale sauvegardée sur ce téléphone.'} Lexique familial Grammalecte 7.7 · {lexiconMetadata.count.toLocaleString('fr-FR')} mots · MPL 2.0 · différent de l’ODS.</Text></View></View></Modal>
+ <Modal visible={!remote&&!!game&&game.status==='playing'&&!revealed&&!saving&&!menuOpen&&!historyOpen&&!infoOpen&&!confirmNew&&!devOpen&&!celebration} transparent animationType="fade" onRequestClose={onBack}><View style={s.backdrop}><View style={s.handoff}><Ionicons name="phone-portrait-outline" size={38} color={purple}/><Text style={s.title}>{visiblePlayers[game?.current??0]?.name}</Text><IconButton primary icon="eye-outline" label="Découvrir mon chevalet" onPress={()=>setRevealed(true)}/><IconButton icon="home-outline" label="Retour à l’accueil" onPress={onBack}/></View></View></Modal>
  <Modal visible={game?.status==='finished'&&!resultDismissed&&!celebration&&!devOpen} transparent animationType="fade" onRequestClose={()=>setResultDismissed(true)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Ionicons name="trophy-outline" size={36} color={purple}/><IconButton icon="close-outline" label="Fermer le résultat" onPress={()=>setResultDismissed(true)}/></View><Text style={s.title}>Partie terminée</Text><Text style={s.text}>{game&&(visiblePlayers[0].score===visiblePlayers[1].score?'Égalité !':visiblePlayers[visiblePlayers[0].score>visiblePlayers[1].score?0:1].name+' remporte la partie !')}</Text><Text style={s.subtitle}>Les reliquats ont été décomptés.</Text></View></View></Modal>
  <Modal visible={!!error} transparent animationType="fade" onRequestClose={()=>setError('')}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Ionicons name="alert-circle-outline" size={30} color="#b02b4a"/><IconButton icon="close-outline" label="Fermer l’erreur" onPress={()=>setError('')}/></View><Text style={s.text}>{error}</Text>{!game&&<Action icon="refresh-outline" label="Nouvelle partie" onPress={()=>{setError('');setConfirmNew(true);}}/>}</View></View></Modal>
  <Modal visible={devOpen} transparent animationType="fade" onRequestClose={()=>setDevOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Mode développeur</Text><IconButton icon="close-outline" label="Fermer le mode développeur" onPress={()=>setDevOpen(false)}/></View><Text style={s.subtitle}>Tests temporaires. Votre partie et sa sauvegarde sont conservées.</Text><ScrollView style={{maxHeight:400}} contentContainerStyle={{gap:10}}>

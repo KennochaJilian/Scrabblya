@@ -11,7 +11,7 @@ cd api
 npm ci
 # Compléter .env à partir de .env.example et appliquer la migration SQL.
 npm run seed:admin
-npm run dev
+npm start
 ```
 
 Dans un second terminal :
@@ -32,8 +32,18 @@ Expo SDK 57 pour Expo Go Android. Aucun secret serveur dans l’app.
 - Création des comptes via `POST /api/admin/users` ou l’écran admin de l’app.
 - Premier admin créé localement par `npm run seed:admin` dans api/.
 - Profil avec nom et avatar modifiables ; avatars privés via liens signés.
-- Sélection du second joueur dans la liste des vrais comptes ; noms/avatars affichés dans la partie et l’historique.
+- Invitations entre comptes et parties en ligne, avec noms et avatars réels.
 - Sauvegardes locales séparées par paire de comptes. Les anciennes parties anonymes restent dans leur clé locale mais ne sont pas automatiquement attribuées à un utilisateur.
+
+## Parties en ligne
+
+Appliquer `supabase/migrations/002_games.sql` après `001_profiles.sql`. L’accueil propose les parties en cours, les invitations et les parties terminées. Le bouton + permet d’inviter un membre ; l’invité accepte ou refuse. L’invitant commence.
+
+Le serveur valide le lexique, les placements, les points, les échanges et les fins avec le même moteur que l’app. L’état complet est privé dans Supabase ; chaque réponse masque le sac et les lettres adverses. Une révision atomique empêche les coups simultanés d’écraser la partie et les identifiants d’action évitent un double envoi après perte de réponse.
+
+L’app actualise une partie ouverte toutes les 5 secondes, l’accueil toutes les 10 secondes, et au retour au premier plan. Seuls les coups validés sont partagés ; aucun placement en direct. Fermer l’app ne supprime pas la partie ; les brouillons non validés ne sont pas conservés.
+
+En développement, laisser l’API tourner avec `npm start` et joindre les téléphones au même réseau que le PC. Un hébergement HTTPS sera nécessaire pour jouer indépendamment du PC. Les notifications push restent à développer.
 
 ## Jeu local
 
@@ -57,8 +67,6 @@ npm --prefix mobile run lint
 
 Pour compiler le bundle Android : `cd mobile` puis `npx expo export --platform android`.
 
-## Reste à activer
+## Intégration Supabase
 
-Le projet Supabase n’est pas encore créé : aucune connexion réelle ni création d’admin n’a été effectuée sur un service distant. Les fichiers, migrations et tests sont prêts pour ce branchement.
-
-Le jeu reste à deux sur le même téléphone. Synchronisation des parties et notifications push entre appareils restent à développer.
+Le projet réel a été configuré et testé : connexion, comptes, profils, invitations, coups, reprise et fins de partie. Le script opt-in `api/scripts/smoke-games.mjs` crée deux comptes temporaires et leurs parties, vérifie le parcours HTTP réel, puis les supprime. Aucun secret n’est versionné.

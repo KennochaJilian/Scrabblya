@@ -1,3 +1,4 @@
+import { createGameService } from './game-service.mjs';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
@@ -34,6 +35,18 @@ export function createApp(service,{origins=[],trustProxyHops=0,loginLimit=10}={}
   if(!match)throw new ApiError(401,'Connexion requise.');
   req.token=match[1];req.account=await service.authenticate(req.token);next();
  });
+ const games=service.gameRepository?createGameService(service.gameRepository,service):null;
+ const available=()=>{if(!games)throw new ApiError(503,'Service de parties indisponible.');return games;};
+ const revision=z.number().int().min(0),actionBase={id:z.uuid(),revision};
+ const command=z.discriminatedUnion('kind',[
+  z.object({...actionBase,kind:z.literal('play'),placements:z.array(z.object({cell:z.number().int().min(0).max(224),rackIndex:z.number().int().min(0).max(6),letter:z.string().regex(/^[A-Z]$/)}).strict()).min(1).max(7)}).strict(),
+  z.object({...actionBase,kind:z.literal('exchange'),indices:z.array(z.number().int().min(0).max(6)).min(1).max(7)}).strict(),
+  ...['pass','accept','decline'].map(kind=>z.object({...actionBase,kind:z.literal(kind)}).strict()),
+ ]);
+ app.get('/api/games',async(req,res)=>res.json({games:await available().list(req.account.id)}));
+ app.post('/api/games',limiter(30),async(req,res)=>res.status(201).json(await available().invite(req.account.id,z.object({id:z.uuid(),opponentId:z.uuid()}).strict().parse(req.body))));
+ app.get('/api/games/:id',async(req,res)=>res.json(await available().get(req.account.id,z.uuid().parse(req.params.id))));
+ app.post('/api/games/:id/actions',limiter(120),async(req,res)=>res.json(await available().act(req.account.id,z.uuid().parse(req.params.id),command.parse(req.body))));
  app.post('/api/auth/logout',async(req,res)=>{await service.logout(req.token);res.status(204).end();});
  app.get('/api/me',async(req,res)=>res.json(await service.me(req.account.id)));
  app.get('/api/users',async(req,res)=>res.json({users:await service.listUsers(req.account.role==='admin')}));

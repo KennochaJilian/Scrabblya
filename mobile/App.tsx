@@ -8,6 +8,8 @@ import { api,uploadAvatar } from './src/api';
 import type { PublicUser } from './src/apiClient';
 import { UserAvatar } from './src/UserAvatar';
 import { LocalGame } from './src/LocalGame';
+import { OnlineGame } from './src/OnlineGame';
+import { GameLobby } from './src/GameLobby';
 const purple='#4b0565';
 function Button({title,onPress,disabled=false,soft=false}:{title:string;onPress:()=>void;disabled?:boolean;soft?:boolean}){return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[s.button,soft&&s.soft,disabled&&{opacity:.4}]}><Text style={[s.buttonText,soft&&{color:purple}]}>{title}</Text></Pressable>;}
 export default function App(){return <AuthProvider><Application/></AuthProvider>;}
@@ -16,6 +18,7 @@ function Application(){
  const [screen,setScreen]=useState<'home'|'game'|'profile'|'admin'>('home');
  const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[visible,setVisible]=useState(false),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
  const [users,setUsers]=useState<PublicUser[]>([]),[opponent,setOpponent]=useState<PublicUser|null>(null),[name,setName]=useState('');
+ const [onlineId,setOnlineId]=useState<string|null>(null);
  const [newName,setNewName]=useState(''),[newEmail,setNewEmail]=useState(''),[newPassword,setNewPassword]=useState('');
  useEffect(()=>{
   if(!user)return;
@@ -35,7 +38,7 @@ function Application(){
   }catch(e){setMessage((e as Error).message);}
  }
  if(loading)return <View style={[s.root,s.center]}><ActivityIndicator size="large" color={purple}/></View>;
- if(user&&screen==='game'&&opponent)return <LocalGame participants={[user,opponent]} onBack={()=>setScreen('home')}/>;
+ if(user&&screen==='game')return onlineId?<OnlineGame key={onlineId} id={onlineId} userId={user.id} onBack={()=>{setOnlineId(null);setScreen('home');}}/>:<LocalGame participants={opponent?[user,opponent]:undefined} onBack={()=>setScreen('home')}/>;
  return <View style={s.root}><StatusBar style="dark"/><Image accessible={false} source={require('./assets/floral-corner-left.png')} style={s.flowers}/><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.page}>
  {!user?<>
  <Image source={require('./assets/alexandrya-login-logo.webp')} style={s.hero} resizeMode="contain"/><Text style={s.brand}>Scrabblya</Text><Text style={s.tagline}>Des lettres, des liens, de belles parties.</Text>
@@ -49,16 +52,14 @@ function Application(){
  <View style={s.header}><View><Text style={s.brandSmall}>Scrabblya</Text><Text style={s.subtitle}>Bonjour {user.name}</Text></View><Pressable accessibilityRole="button" accessibilityLabel="Mon profil" onPress={()=>{setName(user.name);setMessage('');setScreen('profile');}}><UserAvatar name={user.name} avatarUrl={user.avatarUrl} size={50}/></Pressable></View>
  {screen!=='home'&&<Button soft title="‹ Accueil" onPress={()=>{setMessage('');setScreen('home');}}/>}
  {screen==='home'?<>
- <Text style={s.heading}>Avec qui jouer ?</Text><Text style={s.subtitle}>Deux joueurs sur ce téléphone. Les parties entre téléphones arrivent ensuite.</Text>
- {users.filter(p=>p.id!==user.id).map(p=><Pressable key={p.id} accessibilityRole="button" accessibilityLabel={`Jouer avec ${p.name}`} onPress={()=>{setOpponent(p);setMessage('');setScreen('game');}} style={s.person}><UserAvatar name={p.name} avatarUrl={p.avatarUrl}/><Text style={s.personName}>{p.name}</Text><Ionicons name="chevron-forward" size={24} color={purple}/></Pressable>)}
- {users.filter(p=>p.id!==user.id).length===0&&<View style={s.card}><Text style={s.subtitle}>Aucun autre joueur disponible. Un administrateur doit créer les comptes familiaux.</Text></View>}
+ <GameLobby user={user} users={users} onOpen={id=>{setOnlineId(id);setMessage('');setScreen('game');}} onPractice={()=>{setOnlineId(null);setOpponent(users.find(p=>p.id!==user.id)??null);setScreen('game');}}/>
  <Button soft title="Actualiser les joueurs" disabled={busy} onPress={()=>{void execute(async()=>setUsers(await api.users()));}}/>
  {user.role==='admin'&&<Button title="Gestion des utilisateurs" onPress={()=>{setMessage('');setScreen('admin');}}/>}
  </>:screen==='profile'?<View style={s.card}>
  <Text style={s.title}>Mon profil</Text><View style={{alignItems:'center',gap:12}}><UserAvatar name={user.name} avatarUrl={user.avatarUrl} size={90}/><Button soft title="Choisir un avatar" disabled={busy} onPress={()=>{void avatar();}}/></View>
  <Text style={s.label}>Nom</Text><TextInput accessibilityLabel="Nom du profil" style={s.input} value={name} onChangeText={setName} maxLength={80}/><Text style={s.subtitle}>{user.email} · {user.role==='admin'?'Administrateur':'Utilisateur'}</Text>
  <Button title="Enregistrer" disabled={busy||!name.trim()} onPress={()=>{void execute(async()=>{await api.updateName(name);setMessage('Profil mis à jour.');});}}/>
- <Button soft title="Se déconnecter" disabled={busy} onPress={()=>{void execute(async()=>{try{await api.logout();}finally{setUsers([]);setOpponent(null);setScreen('home');}});}}/>
+ <Button soft title="Se déconnecter" disabled={busy} onPress={()=>{void execute(async()=>{try{await api.logout();}finally{setUsers([]);setOpponent(null);setOnlineId(null);setScreen('home');}});}}/>
  </View>:screen==='admin'&&user.role==='admin'?<View style={s.card}>
  <Text style={s.title}>Ajouter un utilisateur</Text><Text style={s.label}>Nom</Text><TextInput accessibilityLabel="Nom du nouvel utilisateur" style={s.input} value={newName} onChangeText={setNewName} maxLength={80}/>
  <Text style={s.label}>Email</Text><TextInput accessibilityLabel="Email du nouvel utilisateur" style={s.input} value={newEmail} onChangeText={setNewEmail} keyboardType="email-address" autoCapitalize="none"/>

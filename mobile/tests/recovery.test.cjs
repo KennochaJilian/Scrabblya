@@ -80,3 +80,45 @@ test('developer play never overwrites normal save and exiting restores the draft
  assert.equal(root.findAll(n=>n.type==='Text'&&n.props.children==='DEV').length,0);
  await act(async()=>rendered.unmount());
 });
+
+
+test('online board sends only placements, preserves a rejected draft and never writes a local save',async()=>{
+ const load=require('./load-ts.cjs'),{createGame,playMove}=load('src/engine.ts'),{lexicon}=load('src/lexicon.ts');
+ const real=createGame(['Alice','Bob'],lexicon.id,()=>.4);real.players[0].userId='alice';real.players[1].userId='bob';real.players[0].rack=['C','H','A','T','E','R','S'];
+ function redacted(game){return {...game,bag:game.bag.map(()=>'?'),players:game.players.map((p,i)=>({...p,rack:i===0?p.rack:p.rack.map(()=>'?')}))};}
+ const initial=redacted(real),{Game,writes}=harness(real);let rendered,failed=true;const calls=[];
+ const remote={game:initial,viewerId:'alice',async onAction(command){calls.push(command);if(failed)throw Error('Connexion interrompue');return redacted(playMove(real,command.placements,lexicon));}};
+ await act(async()=>{rendered=Renderer.create(React.createElement(Game,{onBack(){},remote}));});
+ assert.equal(rendered.root.findAll(n=>n.type==='Pressable'&&n.props.accessibilityLabel==='Découvrir mon chevalet').length,0);
+ for(const [index,letter] of [...'CHAT'].entries()){
+  await act(async()=>host(rendered.root,'View','Lettre '+letter).props.onAccessibilityAction());
+  await act(async()=>rendered.root.find(n=>n.type==='Pressable'&&n.props.accessibilityLabel?.startsWith(`Ligne 8, colonne ${7+index},`)).props.onPress());
+ }
+ await act(async()=>host(rendered.root,'Pressable','Valider le mot').props.onPress());
+ assert.equal(calls[0].kind,'play');assert.equal(calls[0].placements.length,4);assert.deepEqual(Object.keys(calls[0]).sort(),['kind','placements']);
+ assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,4);
+ await act(async()=>host(rendered.root,'Pressable','Fermer l’erreur').props.onPress());failed=false;
+ await act(async()=>host(rendered.root,'Pressable','Valider le mot').props.onPress());
+ assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,0);
+ assert.equal(host(rendered.root,'Pressable','Valider le mot').props.disabled,true);
+ assert.equal(writes.length,0);
+ await act(async()=>rendered.unmount());
+});
+
+test('waiting online player sees their own rack, cannot play and receives the next server turn',async()=>{
+ const load=require('./load-ts.cjs'),{createGame,passTurn}=load('src/engine.ts'),{lexicon}=load('src/lexicon.ts');
+ const game=createGame(['Alice','Bob'],lexicon.id,()=>.4);game.players[0].userId='alice';game.players[1].userId='bob';game.players[0].rack=['?','?','?'];game.players[1].rack=['Z','A','C'];game.bag=game.bag.map(()=>'?');
+ const {Game,writes}=harness(game);let rendered;const remote={game,viewerId:'bob',async onAction(){throw Error('Must not send');}};
+ await act(async()=>{rendered=Renderer.create(React.createElement(Game,{onBack(){},remote}));});
+ const rack=rendered.root.find(n=>n.type==='View'&&n.props.testID==='current-rack');assert.equal(rack.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre Z').length,1);
+ assert.equal(host(rendered.root,'Pressable','Valider le mot').props.disabled,true);
+ await act(async()=>host(rendered.root,'View','Lettre Z').props.onAccessibilityAction());
+ await act(async()=>rendered.root.find(n=>n.type==='Pressable'&&n.props.accessibilityLabel?.startsWith('Ligne 8, colonne 8,')).props.onPress());
+ assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,0);
+ const next=passTurn(game);
+ await act(async()=>rendered.update(React.createElement(Game,{onBack(){},remote:{...remote,game:next}})));
+ await act(async()=>host(rendered.root,'View','Lettre Z').props.onAccessibilityAction());
+ await act(async()=>rendered.root.find(n=>n.type==='Pressable'&&n.props.accessibilityLabel?.startsWith('Ligne 8, colonne 8,')).props.onPress());
+ assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,1);
+ assert.equal(writes.length,0);await act(async()=>rendered.unmount());
+});

@@ -1,3 +1,4 @@
+import type { GameSummary,OnlineSnapshot,VersionedCommand } from './onlineTypes';
 export type PublicUser={id:string;name:string;role:'admin'|'user';avatarUrl:string|null;email?:string};
 export type Session={accessToken:string;refreshToken:string;expiresAt:number;user:PublicUser};
 export class ApiError extends Error{constructor(message:string,public status=0){super(message);}}
@@ -49,6 +50,10 @@ export class ApiClient{
   const send=()=>{if(!this.session)throw new ApiError('Connexion requise.',401);return this.request<T>(path,{...options,headers:{...options.headers,Authorization:'Bearer '+this.session.accessToken}});};
   try{return await send();}catch(error){if(!(error instanceof ApiError)||error.status!==401)throw error;await this.refresh();return send();}
  }
+ async games(){return (await this.call<{games:GameSummary[]}>('/games')).games;}
+ async game(id:string){return this.call<OnlineSnapshot>('/games/'+id);}
+ async inviteGame(id:string,opponentId:string){return this.call<OnlineSnapshot>('/games',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,opponentId})});}
+ async gameAction(id:string,command:VersionedCommand){return this.call<OnlineSnapshot>('/games/'+id+'/actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(command)});}
  async users(){return (await this.call<{users:PublicUser[]}>('/users')).users;}
  private useProfile(user:PublicUser){if(!this.session||this.session.user.id!==user.id)throw new ApiError('Session annulée.',401);this.session.user=user;this.onUserChanged(user);return user;}
  async updateName(name:string){const user=await this.call<PublicUser>('/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});return this.useProfile(user);}
