@@ -14,3 +14,5 @@ coverage/
 *.mobileprovision
 .DS_Store
 Thumbs.db
+
+mobile/vendor/grammalecte/lexique-grammalecte-fr-v7.7.txt

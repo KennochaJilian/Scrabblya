@@ -1,0 +1,8 @@
+{
+  "id": "grammalecte-7.7-family-v1-d854ccab7755",
+  "count": 405616,
+  "sha256": "d854ccab7755aa2be2ee183060daccc493594ba2e72b7734490ace804b0de203",
+  "sourceSha256": "dc1fa3740e6353bccdcb435ea8f1c8a65287726026abd53dd232d5d494548eff",
+  "source": "https://grammalecte.net/dic/lexique-grammalecte-fr-v7.7.zip",
+  "license": "MPL-2.0"
+}
