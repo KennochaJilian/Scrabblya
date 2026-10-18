@@ -1,0 +1,32 @@
+name: scrabblya
+services:
+  api:
+    image: ${SCRABBLYA_API_IMAGE:-codinaaranxa/scrabblya-api:latest}
+    container_name: scrabblya-api
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-3001}:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      HOST: 0.0.0.0
+      SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?SUPABASE_PUBLISHABLE_KEY is required}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?SUPABASE_SECRET_KEY is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://scrabblya.aquarius.irish}
+      TRUST_PROXY_HOPS: 1
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

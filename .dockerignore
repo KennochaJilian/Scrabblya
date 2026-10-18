@@ -1,0 +1,24 @@
+# Only server sources and the shared game/lexicon enter the build context.
+**
+!api/
+!api/package.json
+!api/package-lock.json
+!api/Dockerfile
+!api/src/
+!api/src/**
+!api/scripts/
+!api/scripts/build-game.mjs
+!api/scripts/seed-admin.mjs
+!mobile/
+!mobile/src/
+!mobile/src/engine.ts
+!mobile/src/board.ts
+!mobile/src/data/
+!mobile/src/data/words.json
+!mobile/src/data/lexicon-meta.json
+!mobile/vendor/
+!mobile/vendor/grammalecte/
+!mobile/vendor/grammalecte/*.md
+!mobile/vendor/grammalecte/*.txt
+!mobile/vendor/grammalecte/*.zip
+mobile/vendor/grammalecte/lexique-grammalecte-fr-v7.7.txt

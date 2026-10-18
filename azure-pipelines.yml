@@ -1,0 +1,67 @@
+trigger:
+  branches:
+    include:
+      - main
+
+# The self-hosted agent has Docker access. Do not execute untrusted PR code on it.
+pr: none
+
+pool:
+  name: vps-alexandrya
+
+variables:
+  nodeVersion: '22.x'
+  dockerRegistryServiceConnection: 'dockerhub-alexandrya'
+  dockerRepository: 'codinaaranxa/scrabblya-api'
+
+stages:
+  - stage: validate_publish
+    displayName: Verify Scrabblya and publish API
+    jobs:
+      - job: build
+        displayName: Build and test Scrabblya
+        steps:
+          - checkout: self
+            clean: true
+          - task: NodeTool@0
+            displayName: Use Node.js $(nodeVersion)
+            inputs:
+              versionSpec: $(nodeVersion)
+          - script: npm ci --prefix api
+            displayName: Install API dependencies
+          - script: npm --prefix api run check
+            displayName: Check API syntax
+          - script: npm --prefix api test
+            displayName: Compile shared engine and test API
+          - script: npm ci --prefix mobile
+            displayName: Install mobile dependencies
+          - script: npm --prefix mobile run typecheck
+            displayName: Check mobile TypeScript
+          - script: npm --prefix mobile test
+            displayName: Test game and mobile synchronization
+          - task: Docker@2
+            displayName: Build API image
+            inputs:
+              command: build
+              containerRegistry: $(dockerRegistryServiceConnection)
+              repository: $(dockerRepository)
+              Dockerfile: api/Dockerfile
+              buildContext: .
+              tags: |
+                $(Build.SourceVersion)
+                latest
+          - task: Docker@2
+            displayName: Push API image to Docker Hub
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
+            inputs:
+              command: push
+              containerRegistry: $(dockerRegistryServiceConnection)
+              repository: $(dockerRepository)
+              tags: |
+                $(Build.SourceVersion)
+                latest
+          - task: PublishPipelineArtifact@1
+            displayName: Publish Portainer and Apache configuration
+            inputs:
+              targetPath: deploy
+              artifact: scrabblya-deployment
