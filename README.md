@@ -71,6 +71,10 @@ Pour compiler le bundle Android : `cd mobile` puis `npx expo export --platform a
 
 Image Docker de production, pipeline Azure et stack Portainer : suivre [docs/deployment.md](docs/deployment.md). Le domaine prévu est `scrabblya.aquarius.irish`. Les configurations sont distinctes d’Alexandrya ; le pool Azure et la connexion Docker Hub existants peuvent être autorisés pour ce pipeline.
 
+## APK Android hors store
+
+Le pipeline Azure sélectionne les actions d’après le préfixe du dernier commit : `[api]`, `[apk]` ou `[all]`. Sans préfixe, aucune publication. La branche APK compile une version signée et publie une page HTML à `/telecharger/` sur le VPS. Préparation de Java/SDK, signature Azure Secure Files et configuration Apache : [docs/android-distribution.md](docs/android-distribution.md).
+
 ## Intégration Supabase
 
 Le projet réel a été configuré et testé : connexion, comptes, profils, invitations, coups, reprise et fins de partie. Le script opt-in `api/scripts/smoke-games.mjs` crée deux comptes temporaires et leurs parties, vérifie le parcours HTTP réel, puis les supprime. Aucun secret n’est versionné.

@@ -16,3 +16,9 @@ coverage/
 Thumbs.db
 
 mobile/vendor/grammalecte/lexique-grammalecte-fr-v7.7.txt
+
+# Android release signing and generated installers
+.signing/
+*.apk
+*.aab
+.env-*

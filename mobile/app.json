@@ -4,17 +4,15 @@
     "slug": "scrabblya",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/scrabblya-icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#f3eafa",
+        "foregroundImage": "./assets/scrabblya-icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.scrabblya.app"

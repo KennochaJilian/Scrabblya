@@ -87,6 +87,23 @@ L’URL locale est conservée dans le fichier de développement tant que l’hé
 
 ## Mises à jour et retour arrière
 
-Un push sur `main` déclenche la construction et la publication. Comme pour Alexandrya, le push Docker Hub ne redémarre pas automatiquement Portainer : utiliser **Pull and redeploy** sur la stack Scrabblya.
+Un push sur `main` démarre le pipeline ; le titre du dernier commit choisit la publication : `[api]` pour l’image API, `[apk]` pour l’APK et sa page, `[all]` pour les deux. Sans préfixe, aucune compilation ni publication n’est lancée. Comme pour Alexandrya, le push Docker Hub ne redémarre pas automatiquement Portainer : utiliser **Pull and redeploy** sur la stack Scrabblya.
 
 Pour revenir à une version précédente, remplacer `SCRABBLYA_API_IMAGE` par `codinaaranxa/scrabblya-api:<SHA-du-commit>` puis redéployer. Garder la stack Alexandrya inchangée.
+
+## APK et page de téléchargement
+
+Le pipeline inclut désormais la compilation Android et la publication statique. Suivre [android-distribution.md](android-distribution.md) pour préparer le SDK de l’agent VPS, les secrets de signature et les alias du vhost HTTPS.
+
+## Sélection par commit
+
+| Titre du commit | Action |
+|---|---|
+| `[api] Correction de connexion` | Tests communs, construction et publication de l’image API |
+| `[apk] Ajustement du logo` | Tests communs, compilation APK et publication de la page |
+| `[all] Nouvelle version familiale` | Image API et APK |
+| `Mise à jour de documentation` | Sélection seule, aucune compilation ni publication |
+
+Le préfixe doit commencer la première ligne du **dernier commit poussé**. La casse est ignorée. Si plusieurs commits sont poussés ensemble, seul le dernier décide. Pour un merge/squash, adapter le titre du commit résultant. Azure démarre quand même un court job de sélection : le déclencheur CI lui-même ne filtre pas les messages de commit.
+
+Dans **Run pipeline**, `releaseTarget` permet de choisir `auto`, `api`, `apk` ou `all`. Un choix explicite remplace le préfixe du commit. `publishAndroid=false` conserve l’APK dans les artefacts Azure sans publier la page. Les publications restent réservées à `main`.
