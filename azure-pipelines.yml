@@ -69,6 +69,8 @@ stages:
             displayName: Install mobile dependencies
           - script: npm --prefix mobile run typecheck
             displayName: Check mobile TypeScript
+          - script: node mobile/scripts/check-native-linking.cjs
+            displayName: Check Expo Android native module metadata
           - script: npm --prefix mobile test
             displayName: Test game and mobile synchronization
           - script: node --test deploy/android/tests/*.test.cjs

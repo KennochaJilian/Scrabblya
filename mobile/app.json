@@ -33,7 +33,8 @@
           "photosPermission": "Choisir une photo pour votre avatar Scrabblya.",
           "microphonePermission": false
         }
-      ]
+      ],
+      "expo-font"
     ]
   }
 }
