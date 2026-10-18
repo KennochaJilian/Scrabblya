@@ -1,17 +1,3 @@
-parameters:
-  - name: releaseTarget
-    displayName: Release target (auto = commit prefix)
-    type: string
-    default: auto
-    values:
-      - auto
-      - api
-      - apk
-      - all
-  - name: publishAndroid
-    displayName: Publish APK to VPS
-    type: boolean
-    default: true
 trigger:
   branches:
     include:
@@ -23,35 +9,12 @@ variables:
   nodeVersion: 22.x
   dockerRegistryServiceConnection: dockerhub-alexandrya
   dockerRepository: codinaaranxa/scrabblya-api
-  androidKeystoreSecureFile: scrabblya-release.jks
-  androidJavaHome: /opt/scrabblya/java-21
-  androidSdkRoot: /opt/android-sdk
-  androidApiUrl: https://scrabblya.aquarius.irish/api
-  androidDeployPath: /var/www/scrabblya
 stages:
-  - stage: select_release
-    displayName: Select API / APK from commit prefix
-    jobs:
-      - job: scope
-        displayName: Read release scope
-        steps:
-          - checkout: self
-            clean: true
-          - task: NodeTool@0
-            inputs:
-              versionSpec: $(nodeVersion)
-          - script: node deploy/pipeline/select-release.cjs
-            name: choose
-            displayName: Read [api], [apk] or [all]
-            env:
-              RELEASE_TARGET: ${{ parameters.releaseTarget }}
   - stage: validate
-    displayName: Verify selected release
-    dependsOn: select_release
-    condition: and(succeeded(), eq(dependencies.select_release.outputs['scope.choose.any'], 'true'))
+    displayName: Verify API
     jobs:
       - job: test
-        displayName: Test API and app
+        displayName: Test API and shared game engine
         steps:
           - checkout: self
             clean: true
@@ -65,24 +28,10 @@ stages:
             displayName: Check API syntax
           - script: npm --prefix api test
             displayName: Compile shared engine and test API
-          - script: npm ci --prefix mobile
-            displayName: Install mobile dependencies
-          - script: npm --prefix mobile run typecheck
-            displayName: Check mobile TypeScript
-          - script: node mobile/scripts/check-native-linking.cjs
-            displayName: Check Expo Android native module metadata
-          - script: npm --prefix mobile test
-            displayName: Test game and mobile synchronization
-          - script: node --test deploy/android/tests/*.test.cjs
-            displayName: Test Android release packaging and publication
-          - script: node --test deploy/pipeline/tests/*.test.cjs
-            displayName: Test commit-based release selection
   - stage: publish_api
     displayName: Build and publish API image
-    dependsOn:
-      - select_release
-      - validate
-    condition: and(succeeded(), eq(dependencies.select_release.outputs['scope.choose.api'], 'true'), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
+    dependsOn: validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
     jobs:
       - job: docker
         displayName: Publish API Docker image
@@ -102,7 +51,6 @@ stages:
                 latest
           - task: Docker@2
             displayName: Push API image to Docker Hub
-            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
             inputs:
               command: push
               containerRegistry: $(dockerRegistryServiceConnection)
@@ -110,122 +58,3 @@ stages:
               tags: |
                 $(Build.SourceVersion)
                 latest
-          - task: PublishPipelineArtifact@1
-            displayName: Publish Portainer and Apache configuration
-            inputs:
-              targetPath: deploy
-              artifact: scrabblya-deployment
-  - ${{ if ne(parameters.releaseTarget, 'api') }}:
-      - stage: android_release
-        displayName: Build signed Android APK
-        dependsOn:
-          - select_release
-          - validate
-        condition: and(succeeded(), eq(dependencies.select_release.outputs['scope.choose.apk'], 'true'), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
-        jobs:
-          - job: apk
-            displayName: Build APK on VPS agent
-            timeoutInMinutes: 90
-            steps:
-              - checkout: self
-                clean: true
-              - task: NodeTool@0
-                inputs:
-                  versionSpec: $(nodeVersion)
-              - task: DownloadSecureFile@1
-                name: androidKey
-                displayName: Download Android release keystore
-                inputs:
-                  secureFile: $(androidKeystoreSecureFile)
-              - bash: |
-                  set -euo pipefail
-                  test -x "$JAVA_HOME/bin/java" || { echo 'Run deploy/android/setup-agent.sh first.'; exit 1; }
-                  test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" || { echo 'Android SDK is missing.'; exit 1; }
-                  export PATH="$JAVA_HOME/bin:$PATH"
-                  timeout 25m "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" </dev/null \
-                    'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
-                  for component in 'platform-tools/adb' 'platforms/android-36/android.jar' 'build-tools/36.0.0/apksigner' 'ndk/27.1.12297006/source.properties' 'cmake/3.22.1/bin/cmake'; do
-                    test -f "$ANDROID_HOME/$component" || {
-                      echo "Android SDK incomplete: $component is missing."
-                      echo 'Review and accept SDK licenses in SSH as azagent using sdkmanager --licenses, then retry.'
-                      exit 1
-                    }
-                  done
-                displayName: Verify Java and install required Android SDK packages
-                timeoutInMinutes: 30
-                env:
-                  JAVA_HOME: $(androidJavaHome)
-                  ANDROID_HOME: $(androidSdkRoot)
-              - script: npm ci --prefix mobile
-                displayName: Install app dependencies
-              - bash: |
-                  set -euo pipefail
-                  npx expo prebuild --platform android --no-install
-                  node scripts/configure-android-release.cjs
-                  chmod +x android/gradlew
-                  export PATH="$JAVA_HOME/bin:$PATH"
-                  cd android
-                  ./gradlew :app:assembleRelease --no-daemon --max-workers=2 \
-                    -Dorg.gradle.parallel=false \
-                    '-Dorg.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m' \
-                    -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
-                workingDirectory: mobile
-                displayName: Generate native project and compile signed APK
-                env:
-                  CI: "1"
-                  EXPO_NO_DOTENV: "1"
-                  EXPO_PUBLIC_API_URL: $(androidApiUrl)
-                  ANDROID_VERSION_CODE: $(Build.BuildId)
-                  JAVA_HOME: $(androidJavaHome)
-                  ANDROID_HOME: $(androidSdkRoot)
-                  GRADLE_USER_HOME: $(Agent.ToolsDirectory)/scrabblya-gradle
-                  NODE_OPTIONS: --max-old-space-size=2048
-                  ANDROID_KEYSTORE_FILE: $(androidKey.secureFilePath)
-                  ANDROID_KEYSTORE_PASSWORD: $(ANDROID_KEYSTORE_PASSWORD)
-                  ANDROID_KEY_ALIAS: $(ANDROID_KEY_ALIAS)
-                  ANDROID_KEY_PASSWORD: $(ANDROID_KEY_PASSWORD)
-              - bash: |
-                  set -euo pipefail
-                  export PATH="$JAVA_HOME/bin:$PATH"
-                  apk='mobile/android/app/build/outputs/apk/release/app-release.apk'
-                  bash deploy/android/verify-apk.sh "$apk"
-                  node deploy/android/build-download-page.cjs "$apk" "$OUTPUT_DIRECTORY" "$ANDROID_VERSION_CODE"
-                displayName: Verify release signature and prepare download page
-                env:
-                  JAVA_HOME: $(androidJavaHome)
-                  ANDROID_HOME: $(androidSdkRoot)
-                  ANDROID_VERSION_CODE: $(Build.BuildId)
-                  ANDROID_KEYSTORE_FILE: $(androidKey.secureFilePath)
-                  ANDROID_KEYSTORE_PASSWORD: $(ANDROID_KEYSTORE_PASSWORD)
-                  ANDROID_KEY_ALIAS: $(ANDROID_KEY_ALIAS)
-                  OUTPUT_DIRECTORY: $(Build.ArtifactStagingDirectory)/android-release
-              - task: PublishPipelineArtifact@1
-                displayName: Publish signed APK and download page artifact
-                inputs:
-                  targetPath: $(Build.ArtifactStagingDirectory)/android-release
-                  artifact: scrabblya-android
-  - ${{ if and(ne(parameters.releaseTarget, 'api'), eq(parameters.publishAndroid, true)) }}:
-      - stage: publish_android
-        displayName: Publish Android download on Apache
-        dependsOn: android_release
-        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
-        jobs:
-          - job: publish
-            displayName: Update /telecharger on VPS
-            steps:
-              - checkout: self
-                clean: true
-              - task: NodeTool@0
-                inputs:
-                  versionSpec: $(nodeVersion)
-              - task: DownloadPipelineArtifact@2
-                inputs:
-                  artifact: scrabblya-android
-                  path: $(Pipeline.Workspace)/scrabblya-android
-              - bash: |
-                  set -euo pipefail
-                  bash deploy/android/publish-download.sh "$ARTIFACT_DIRECTORY" "$DEPLOY_DIRECTORY"
-                displayName: Atomically publish page and versioned APK
-                env:
-                  ARTIFACT_DIRECTORY: $(Pipeline.Workspace)/scrabblya-android
-                  DEPLOY_DIRECTORY: $(androidDeployPath)
