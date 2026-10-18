@@ -71,3 +71,18 @@ test('seed requires explicit valid credentials and asks service for admin creati
  assert.equal(service.calls.at(-1)[0],'seed');assert.equal(service.calls.at(-1)[1].email,'admin@example.test');
 });
 
+
+test('only admin can change another user avatar; validates target and image before writing',()=>withApi(async(req,service)=>{
+ const route=`/api/admin/users/${user.id}/avatar`;
+ const form=()=>{const f=new FormData();f.append('avatar',new Blob([Buffer.from('89504e470d0a1a0a','hex')],{type:'image/png'}),'avatar.png');return f;};
+ for(const [token,status] of [[undefined,401],['user-token',403]])assert.equal((await req(route,{method:'POST',token,raw:form()})).status,status);
+ assert.equal(service.calls.filter(c=>c[0]==='avatar').length,0);
+ assert.equal((await req('/api/admin/users/invalid/avatar',{method:'POST',token:'admin-token',raw:form()})).status,400);
+ assert.equal((await req(route,{method:'POST',token:'admin-token'})).status,400);
+ const invalid=new FormData();invalid.append('avatar',new Blob(['fake'],{type:'image/png'}),'avatar.png');
+ assert.equal((await req(route,{method:'POST',token:'admin-token',raw:invalid})).status,400);
+ const large=new FormData();large.append('avatar',new Blob([Buffer.alloc(2097153)],{type:'image/png'}),'large.png');
+ assert.equal((await req(route,{method:'POST',token:'admin-token',raw:large})).status,400);
+ assert.equal((await req(route,{method:'POST',token:'admin-token',raw:form()})).status,200);
+ assert.deepEqual(service.calls.at(-1),['avatar',user.id,8,'image/png']);
+}));

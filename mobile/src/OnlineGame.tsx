@@ -40,6 +40,6 @@ export function OnlineGame({id,userId,onBack}:{id:string;userId:string;onBack:()
    throw error;
   }finally{sending.current=false;}
  },[id,install]);
- if(!snapshot)return <View style={{flex:1,justifyContent:'center',alignItems:'center',padding:24,gap:20,backgroundColor:'#f3eafa'}}>{error?<Text style={{color:'#4b0565'}}>{error}</Text>:<ActivityIndicator color="#4b0565"/>}<Pressable onPress={()=>{void refresh();}}><Text>Réessayer</Text></Pressable><Pressable onPress={onBack}><Text>Accueil</Text></Pressable></View>;
+ if(!snapshot)return <View style={{flex:1,justifyContent:'center',alignItems:'center',padding:24,gap:20,backgroundColor:'#f3eafa'}}>{error?<Text style={{color:'#4b0565'}}>{error}</Text>:<ActivityIndicator color="#4b0565"/>}<Pressable onPress={()=>{void refresh();}}><Text>Réessayer</Text></Pressable></View>;
  return <View style={{flex:1}}>{!!error&&<Pressable onPress={()=>{void refresh();}} style={{padding:10,backgroundColor:'#fff0dc'}}><Text accessibilityLiveRegion="polite">{error} Touchez pour actualiser.</Text></Pressable>}<LocalGame onBack={onBack} participants={snapshot.players.map(p=>({...p,role:'user' as const}))} remote={{game:snapshot.state,viewerId:userId,onAction:submit}}/></View>;
 }

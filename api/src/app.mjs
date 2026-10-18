@@ -58,6 +58,12 @@ export function createApp(service,{origins=[],trustProxyHops=0,loginLimit=10}={}
   res.json(await service.uploadAvatar(req.account.id,req.file.buffer,mime));
  });
  app.use('/api/admin', (req,_res,next)=>{if(req.account.role!=='admin')throw new ApiError(403,'Accès administrateur requis.');next();});
+ app.post('/api/admin/users/:id/avatar',limiter(20),upload.single('avatar'),async(req,res)=>{
+  const id=z.uuid().parse(req.params.id);
+  if(!req.file)throw new ApiError(400,'Choisissez un fichier avatar.');
+  const mime=imageMime(req.file.buffer);if(!mime||mime!==req.file.mimetype)throw new ApiError(400,'Image PNG, JPEG ou WebP requise.');
+  res.json(await service.uploadAvatar(id,req.file.buffer,mime));
+ });
  app.post('/api/admin/users',limiter(30),async(req,res)=>{res.status(201).json(await service.createAccount(accountInput.parse(req.body)));});
  app.put('/api/admin/users/:id/password',limiter(20),async(req,res)=>{
   const id=z.uuid().parse(req.params.id),{password}=z.object({password:accountInput.shape.password}).strict().parse(req.body);

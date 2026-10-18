@@ -1,5 +1,5 @@
-import React,{useEffect,useState} from 'react';
-import { ActivityIndicator,Alert,Image,Keyboard,KeyboardAvoidingView,Platform,Pressable,ScrollView,StyleSheet,Text,TextInput,View,useWindowDimensions } from 'react-native';
+import React,{useCallback,useEffect,useState} from 'react';
+import { ActivityIndicator,Alert,BackHandler,Image,Keyboard,KeyboardAvoidingView,Platform,Pressable,ScrollView,StyleSheet,Text,TextInput,View,useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -21,6 +21,17 @@ function Application(){
  const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[visible,setVisible]=useState(false),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
  const [users,setUsers]=useState<PublicUser[]>([]),[opponent,setOpponent]=useState<PublicUser|null>(null),[name,setName]=useState('');
  const [onlineId,setOnlineId]=useState<string|null>(null);
+ const [history,setHistory]=useState<('home'|'game'|'profile'|'admin')[]>([]);
+ function navigate(next:typeof screen){if(next===screen)return;setHistory([...history,screen]);setScreen(next);setMessage('');}
+ const goBack=useCallback(()=>{const previous=history.at(-1)??'home';setHistory(history.slice(0,-1));setScreen(previous);setMessage('');if(screen==='game')setOnlineId(null);},[history,screen]);
+ useEffect(()=>{
+  const subscription=BackHandler.addEventListener('hardwareBackPress',()=>{
+   if(!user||screen==='home')return false;
+   goBack();return true;
+  });
+  return ()=>subscription.remove();
+ },[user,screen,goBack]);
+
  const [newName,setNewName]=useState(''),[newEmail,setNewEmail]=useState(''),[newPassword,setNewPassword]=useState('');
  useEffect(()=>{
   if(!user)return;
@@ -29,19 +40,19 @@ function Application(){
   return ()=>{alive=false;};
  },[user]);
  async function execute(work:()=>Promise<void>){if(busy)return;setBusy(true);setMessage('');try{await work();}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
- async function avatar(){
+ async function avatar(targetId?:string){
   try{
    if(__DEV__)console.info('[Scrabblya avatar] ouverture de la galerie');
    const result=await ImagePicker.launchImageLibraryAsync({mediaTypes:['images'],allowsEditing:true,aspect:[1,1],quality:.7});
    if(result.canceled){if(__DEV__)console.info('[Scrabblya avatar] sélection annulée');return;}
    if(__DEV__)console.info('[Scrabblya avatar] photo sélectionnée');
    const asset=result.assets[0];if(asset.fileSize&&asset.fileSize>2097152){setMessage('Choisissez une image de moins de 2 Mo.');return;}
-   await execute(async()=>{await uploadAvatar(asset.uri);setMessage('Avatar mis à jour.');});
+   await execute(async()=>{const updated=await uploadAvatar(asset.uri,targetId);setUsers(list=>list.map(p=>p.id===updated.id?updated:p));setMessage('Avatar mis à jour.');});
   }catch(e){setMessage((e as Error).message);}
  }
  if(loading)return <View style={[s.root,s.center]}><ActivityIndicator size="large" color={purple}/></View>;
- if(user&&screen==='game'&&onlineId)return <OnlineGame key={onlineId} id={onlineId} userId={user.id} onBack={()=>{setOnlineId(null);setScreen('home');}}/>;
- if(user?.role==='admin'&&screen==='game'&&!onlineId)return <LocalGame participants={opponent?[user,opponent]:undefined} onBack={()=>setScreen('home')}/>;
+ if(user&&screen==='game'&&onlineId)return <OnlineGame key={onlineId} id={onlineId} userId={user.id} onBack={goBack}/>;
+ if(user?.role==='admin'&&screen==='game'&&!onlineId)return <LocalGame participants={opponent?[user,opponent]:undefined} onBack={goBack}/>;
  return <View style={s.root}><StatusBar style="dark"/><Image accessible={false} source={require('./assets/floral-corner-left.png')} style={s.flowers}/><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[s.page,!user&&s.loginPage]}>
  {!user?<>
  <View style={s.loginBrand}><Image accessibilityLabel="Scrabblya" source={require('./assets/scrabblya-logo.png')} style={[s.hero,{height:loginLogoHeight,width:loginLogoHeight*4/3}]} resizeMode="contain"/><Text style={s.tagline}>Des lettres, des liens, de belles parties.</Text></View>
@@ -52,23 +63,22 @@ function Application(){
  <Pressable onPress={()=>Alert.alert('Mot de passe oublié','Votre administrateur peut réinitialiser votre mot de passe.')}><Text style={s.link}>Mot de passe oublié ?</Text></Pressable>
  </View>{!!restoreError&&<><Text style={s.notice}>{restoreError}</Text><Button soft title="Réessayer la session enregistrée" onPress={retry}/></>}
  </>:<>
- <View style={s.header}><Image accessibilityLabel="Scrabblya" source={require('./assets/scrabblya-icon.png')} style={s.homeLogo} resizeMode="contain"/><Pressable accessibilityRole="button" accessibilityLabel="Mon profil" onPress={()=>{setName(user.name);setMessage('');setScreen('profile');}}><UserAvatar name={user.name} avatarUrl={user.avatarUrl} size={50}/></Pressable></View>
- {screen!=='home'&&<Button soft title="‹ Accueil" onPress={()=>{setMessage('');setScreen('home');}}/>}
+ <View style={s.header}><Image accessibilityLabel="Scrabblya" source={require('./assets/scrabblya-icon.png')} style={s.homeLogo} resizeMode="contain"/><Pressable accessibilityRole="button" accessibilityLabel="Mon profil" onPress={()=>{setName(user.name);setMessage('');navigate('profile');}}><UserAvatar name={user.name} avatarUrl={user.avatarUrl} size={50}/></Pressable></View>
  {screen==='home'?<>
- <GameLobby user={user} users={users} onOpen={id=>{setOnlineId(id);setMessage('');setScreen('game');}} onPractice={()=>{if(user.role!=='admin')return;setOnlineId(null);setOpponent(users.find(p=>p.id!==user.id)??null);setScreen('game');}}/>
+ <GameLobby user={user} users={users} onOpen={id=>{setOnlineId(id);setMessage('');navigate('game');}} onPractice={()=>{if(user.role!=='admin')return;setOnlineId(null);setOpponent(users.find(p=>p.id!==user.id)??null);navigate('game');}}/>
  <Button soft title="Actualiser les joueurs" disabled={busy} onPress={()=>{void execute(async()=>setUsers(await api.users()));}}/>
- {user.role==='admin'&&<Button title="Gestion des utilisateurs" onPress={()=>{setMessage('');setScreen('admin');}}/>}
+ {user.role==='admin'&&<Button title="Gestion des utilisateurs" onPress={()=>{setMessage('');navigate('admin');}}/>}
  </>:screen==='profile'?<View style={s.card}>
  <Text style={s.title}>Mon profil</Text><View style={{alignItems:'center',gap:12}}><UserAvatar name={user.name} avatarUrl={user.avatarUrl} size={90}/><Button soft title="Choisir un avatar" disabled={busy} onPress={()=>{void avatar();}}/></View>
  <Text style={s.label}>Nom</Text><TextInput accessibilityLabel="Nom du profil" style={s.input} value={name} onChangeText={setName} maxLength={80}/><Text style={s.subtitle}>{user.email} · {user.role==='admin'?'Administrateur':'Utilisateur'}</Text>
  <Button title="Enregistrer" disabled={busy||!name.trim()} onPress={()=>{void execute(async()=>{await api.updateName(name);setMessage('Profil mis à jour.');});}}/>
- <Button soft title="Se déconnecter" disabled={busy} onPress={()=>{void execute(async()=>{try{await api.logout();}finally{setUsers([]);setOpponent(null);setOnlineId(null);setScreen('home');}});}}/>
+ <Button soft title="Se déconnecter" disabled={busy} onPress={()=>{void execute(async()=>{try{await api.logout();}finally{setUsers([]);setOpponent(null);setOnlineId(null);setHistory([]);setScreen('home');}});}}/>
  </View>:screen==='admin'&&user.role==='admin'?<View style={s.card}>
  <Text style={s.title}>Ajouter un utilisateur</Text><Text style={s.label}>Nom</Text><TextInput accessibilityLabel="Nom du nouvel utilisateur" style={s.input} value={newName} onChangeText={setNewName} maxLength={80}/>
  <Text style={s.label}>Email</Text><TextInput accessibilityLabel="Email du nouvel utilisateur" style={s.input} value={newEmail} onChangeText={setNewEmail} keyboardType="email-address" autoCapitalize="none"/>
  <Text style={s.label}>Mot de passe initial</Text><TextInput accessibilityLabel="Mot de passe initial du nouvel utilisateur" style={s.input} value={newPassword} onChangeText={setNewPassword} secureTextEntry autoCapitalize="none"/>
  <Text style={s.subtitle}>12 caractères minimum. Le nouveau compte aura le rôle utilisateur.</Text><Button title="Créer le compte" disabled={busy||!newName.trim()||!newEmail.trim()||newPassword.length<12} onPress={()=>{void execute(async()=>{await api.createUser({name:newName.trim(),email:newEmail.trim(),password:newPassword});setNewName('');setNewEmail('');setNewPassword('');setUsers(await api.users());setMessage('Compte créé.');});}}/>
- {users.map(p=><View key={p.id} style={s.person}><UserAvatar name={p.name} avatarUrl={p.avatarUrl} size={34}/><View style={{flex:1}}><Text style={s.personName}>{p.name}</Text><Text style={s.subtitle}>{p.email} · {p.role}</Text></View></View>)}
+ {users.map(p=><View key={p.id} style={s.person}><UserAvatar name={p.name} avatarUrl={p.avatarUrl} size={34}/><View style={{flex:1}}><Text style={s.personName}>{p.name}</Text><Text style={s.subtitle}>{p.email} · {p.role}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={`Modifier l’avatar de ${p.name}`} disabled={busy} onPress={()=>{void avatar(p.id);}} style={{padding:10,opacity:busy?.4:1}}><Ionicons name="camera-outline" size={24} color={purple}/></Pressable></View>)}
  </View>:null}
  </>}
  {!!message&&!!user&&<Text accessibilityLiveRegion="polite" style={s.notice}>{message}</Text>}
