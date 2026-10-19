@@ -122,3 +122,35 @@ test('waiting online player sees their own rack, cannot play and receives the ne
  assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,1);
  assert.equal(writes.length,0);await act(async()=>rendered.unmount());
 });
+
+test('waiting player can confirm resignation, cancel keeps game intact and winner ignores scores',async()=>{
+ const load=require('./load-ts.cjs'),{createGame,resignGame}=load('src/engine.ts'),{lexicon}=load('src/lexicon.ts');
+ const game=createGame(['Alice','Bob'],lexicon.id,()=>.4);game.players[0].userId='alice';game.players[1].userId='bob';game.players[1].score=200;
+ const {Game,writes}=harness(game);const calls=[];let rendered;
+ const remote={game,viewerId:'bob',async onAction(command){calls.push(command);return resignGame(game,1);}};
+ await act(async()=>{rendered=Renderer.create(React.createElement(Game,{onBack(){},remote}));});
+ const pressAction=async label=>{await act(async()=>rendered.root.find(n=>n.type==='Pressable'&&n.findAll(c=>c.type==='Text'&&c.props.children===label).length>0).props.onPress());};
+ await act(async()=>host(rendered.root,'Pressable','Menu de la partie').props.onPress());
+ await pressAction('Abandonner la partie');assert.equal(calls.length,0);
+ await pressAction('Continuer la partie');assert.equal(calls.length,0);
+ await act(async()=>host(rendered.root,'Pressable','Menu de la partie').props.onPress());
+ await pressAction('Abandonner la partie');await pressAction('Confirmer l’abandon');
+ assert.deepEqual(calls,[{kind:'resign'}]);assert.equal(writes.length,0);
+ assert(rendered.root.findAllByType('Text').some(t=>t.props.children==='Alice remporte la partie par abandon !'));
+ assert.equal(host(rendered.root,'Pressable','Résultat de la partie').props.disabled,false);
+ await act(async()=>rendered.unmount());
+});
+
+test('end modal retries a failed invitation, prevents duplicates after success and returns home',async()=>{
+ const load=require('./load-ts.cjs'),{createGame,resignGame}=load('src/engine.ts'),{lexicon}=load('src/lexicon.ts');
+ const game=resignGame(createGame(['Alice','Bob'],lexicon.id,()=>.4),0);
+ const {Game}=harness(game);let rendered,attempts=0,home=0;
+ await act(async()=>{rendered=Renderer.create(React.createElement(Game,{onBack(){home++;},async onRematch(){if(++attempts===1)throw Error('Connexion interrompue');},remote:{game,viewerId:'alice',onAction(){throw Error('No move');}}}));});
+ const action=label=>rendered.root.find(n=>n.type==='Pressable'&&n.findAll(c=>c.type==='Text'&&c.props.children===label).length>0);
+ await act(async()=>action('Réinviter cet adversaire').props.onPress());
+ assert.equal(attempts,1);assert(rendered.root.findAllByType('Text').some(t=>t.props.children==='Connexion interrompue'));
+ await act(async()=>action('Réinviter cet adversaire').props.onPress());
+ assert.equal(attempts,2);assert.equal(action('Invitation envoyée').props.disabled,true);
+ await act(async()=>action('Retour à l’accueil').props.onPress());assert.equal(home,1);
+ await act(async()=>rendered.unmount());
+});

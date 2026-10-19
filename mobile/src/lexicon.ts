@@ -4,6 +4,7 @@ import type { Lexicon } from './engine';
 let words: Set<string> | undefined;
 export const lexicon: Lexicon = {
  id: metadata.id,
+ entries(){words??=new Set((data as string).split('\n'));return words.values();},
  has(word) { words ??= new Set((data as string).split('\n')); return words.has(word); },
 };
 export const lexiconMetadata = metadata;

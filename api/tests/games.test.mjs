@@ -5,7 +5,7 @@ import { createGameService } from '../src/game-service.mjs';
 import { createApp } from '../src/app.mjs';
 import { ApiError } from '../src/errors.mjs';
 const a='00000000-0000-4000-8000-000000000001',b='00000000-0000-4000-8000-000000000002',outsider='00000000-0000-4000-8000-000000000003';
-function setup(){
+function setup(options={}){
  const rows=new Map();
  const repository={
   async get(id){return structuredClone(rows.get(id)??null);},
@@ -14,7 +14,7 @@ function setup(){
   async replace(id,revision,patch){const row=rows.get(id);if(!row||row.revision!==revision)return null;const next={...row,...structuredClone(patch)};rows.set(id,next);return structuredClone(next);},
  };
  const accounts={gameRepository:repository,async me(id){return {id,name:id===a?'Alice':'Bob',avatarUrl:null,email:'private@example.test',role:'user'};},async authenticate(token){if(![a,b,outsider].includes(token))throw new ApiError(401,'Connexion requise.');return {id:token,role:'user'};}};
- const service=createGameService(repository,accounts,{random:()=>.5});
+ const service=createGameService(repository,accounts,{random:()=>.5,...options});
  const command=(kind,revision,extra={})=>({id:randomUUID(),kind,revision,...extra});
  async function active(){const row=await service.invite(a,{id:randomUUID(),opponentId:b});return service.act(b,row.id,command('accept',0));}
  return {rows,repository,accounts,service,command,active};
@@ -90,4 +90,52 @@ test('HTTP routes enforce UUIDs, membership and reject client-authored scores or
   response=await request('/'+game.id+'/actions','POST',{id:randomUUID(),kind:'pass',revision:1,score:999,state:{}});assert.equal(response.status,400);
   response=await request();const list=await response.json();assert.equal(list.games.length,1);assert.equal(list.games[0].state,undefined);assert.equal(list.games[0].players[0].rack,undefined);
  }finally{await new Promise(r=>server.close(r));}
+});
+
+test('either member can resign out of turn; finished result preserves scores and survives reload',async()=>{
+ for(const resigning of [a,b]){
+  const {service,command,active,rows}=setup();const game=await active();
+  rows.get(game.id).state.players[resigning===a?0:1].score=200;
+  const previous=structuredClone(rows.get(game.id).state);
+  const action=command('resign',game.revision);
+  const result=await service.act(resigning,game.id,action);
+  assert.equal(result.status,'finished');assert.equal(result.state.status,'finished');assert.equal(result.endReason,'resignation');
+  assert.equal(result.resignedByUserId,resigning);assert.equal(result.state.resignedBy,resigning===a?0:1);
+  assert.deepEqual(result.state.players.map(p=>p.score),previous.players.map(p=>p.score));
+  assert.equal(result.state.history.at(-1).kind,'resign');assert.equal(result.revision,game.revision+1);
+  const other=resigning===a?b:a;
+  const reloaded=await service.get(other,game.id);assert.equal(reloaded.status,'finished');assert.equal(reloaded.resignedByUserId,resigning);
+  assert(reloaded.state.players.find(p=>p.userId===resigning).rack.every(l=>l==='?'));
+  assert.equal((await service.list(other))[0].status,'finished');
+  assert.equal((await service.act(resigning,game.id,action)).revision,result.revision);
+  await assert.rejects(()=>service.act(other,game.id,command('pass',result.revision)),{status:409});
+  await assert.rejects(()=>service.act(other,game.id,command('resign',result.revision)),{status:409});
+ }
+});
+test('resignation rejects outsiders, pending invitations and stale revisions without finishing the game',async()=>{
+ const {service,command,active,rows}=setup();const invitation=await service.invite(a,{id:randomUUID(),opponentId:b});
+ await assert.rejects(()=>service.act(a,invitation.id,command('resign',0)),{status:409});
+ const game=await active();
+ await assert.rejects(()=>service.act(outsider,game.id,command('resign',game.revision)),{status:404});
+ await assert.rejects(()=>service.act(b,game.id,command('resign',game.revision-1)),{status:409});
+ assert.equal(rows.get(game.id).status,'active');
+});
+
+test('blocked games are persisted as finished and notified once, including explicit opening checks',async()=>{
+ const lexicon={id:'blocked-test',has:word=>word==='AT',entries:()=>['AT']},events=[];
+ const {service,active,rows,command}=setup({lexicon,onChanged:row=>events.push({id:row.id,status:row.status,revision:row.revision})});
+ const game=await active(),row=rows.get(game.id);row.state.bag=[];row.state.players[0].rack=['Q'];row.state.players[1].rack=['Z'];row.state.players[0].score=50;row.state.players[1].score=40;
+ const check=command('check-blocked',game.revision),ended=await service.act(b,game.id,check);
+ assert.equal(ended.status,'finished');assert.equal(ended.state.endReason,'blocked');assert.deepEqual(ended.state.players.map(p=>p.score),[42,30]);
+ assert.equal((await service.list(a))[0].status,'finished');assert.equal((await service.get(b,game.id)).state.endReason,'blocked');
+ const count=events.length;await service.act(b,game.id,check);assert.equal(events.length,count);assert.equal(events.at(-1).status,'finished');
+});
+test('a pass automatically ends an impossible game, but a rescuing bag keeps it active',async()=>{
+ const lexicon={id:'blocked-test',has:word=>word==='AT',entries:()=>['AT']};
+ for(const rescue of [false,true]){
+  const {service,active,rows,command}=setup({lexicon});const game=await active(),row=rows.get(game.id);
+  row.state.players[0].rack=['A'];row.state.players[1].rack=['Q'];row.state.bag=rescue?['T','Q','Q','Q','Q','Q','Q']:[];
+  const next=await service.act(a,game.id,command('pass',game.revision));assert.equal(next.status,rescue?'active':'finished');
+  if(rescue){const checked=await service.act(a,game.id,command('check-blocked',next.revision));assert.equal(checked.revision,next.revision);}
+ }
 });

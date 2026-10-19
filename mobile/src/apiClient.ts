@@ -50,6 +50,13 @@ export class ApiClient{
   const send=()=>{if(!this.session)throw new ApiError('Connexion requise.',401);return this.request<T>(path,{...options,headers:{...options.headers,Authorization:'Bearer '+this.session.accessToken}});};
   try{return await send();}catch(error){if(!(error instanceof ApiError)||error.status!==401)throw error;await this.refresh();return send();}
  }
+ async realtimeCredentials(){
+  if(!this.session)throw new ApiError('Connexion requise.',401);
+  if(this.session.expiresAt*1000<Date.now()+60000)await this.refresh();
+  if(!this.session)throw new ApiError('Connexion requise.',401);
+  return {url:this.base.replace(/\/$/,'').replace(/^http:/,'ws:').replace(/^https:/,'wss:')+'/events',token:this.session.accessToken};
+ }
+ async refreshProfile(){return this.useProfile(await this.call<PublicUser>('/me'));}
  async games(){return (await this.call<{games:GameSummary[]}>('/games')).games;}
  async game(id:string){return this.call<OnlineSnapshot>('/games/'+id);}
  async inviteGame(id:string,opponentId:string){return this.call<OnlineSnapshot>('/games',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,opponentId})});}

@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { AuthProvider,useAuth } from './src/AuthContext';
-import { api,uploadAvatar } from './src/api';
+import { api,realtime,uploadAvatar } from './src/api';
 import type { PublicUser } from './src/apiClient';
 import { UserAvatar } from './src/UserAvatar';
 import { LocalGame } from './src/LocalGame';
@@ -36,8 +36,9 @@ function Application(){
  useEffect(()=>{
   if(!user)return;
   let alive=true;
-  api.users().then(list=>{if(alive)setUsers(list);}).catch(e=>{if(alive)setMessage((e as Error).message);});
-  return ()=>{alive=false;};
+  const refresh=()=>{void api.users().then(list=>{if(alive)setUsers(list);}).catch(e=>{if(alive)setMessage((e as Error).message);});};
+  refresh();const unsubscribe=realtime.subscribe(event=>{if(event.type==='ready'||event.type==='users.changed')refresh();});
+  return ()=>{alive=false;unsubscribe();};
  },[user]);
  async function execute(work:()=>Promise<void>){if(busy)return;setBusy(true);setMessage('');try{await work();}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
  async function avatar(targetId?:string){
@@ -46,7 +47,7 @@ function Application(){
    const result=await ImagePicker.launchImageLibraryAsync({mediaTypes:['images'],allowsEditing:true,aspect:[1,1],quality:.7});
    if(result.canceled){if(__DEV__)console.info('[Scrabblya avatar] sélection annulée');return;}
    if(__DEV__)console.info('[Scrabblya avatar] photo sélectionnée');
-   const asset=result.assets[0];if(asset.fileSize&&asset.fileSize>2097152){setMessage('Choisissez une image de moins de 2 Mo.');return;}
+   const asset=result.assets[0];if(asset.fileSize&&asset.fileSize>10485760){setMessage('Choisissez une image de moins de 10 Mo.');return;}
    await execute(async()=>{const updated=await uploadAvatar(asset.uri,targetId);setUsers(list=>list.map(p=>p.id===updated.id?updated:p));setMessage('Avatar mis à jour.');});
   }catch(e){setMessage((e as Error).message);}
  }

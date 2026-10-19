@@ -51,7 +51,7 @@ test('avatar checks auth, content signature, size and correct owner',()=>withApi
  const valid=new FormData();valid.append('avatar',new Blob([png],{type:'image/png'}),'avatar.png');
  const response=await req('/api/me/avatar',{method:'POST',token:'user-token',raw:valid});assert.equal(response.status,200);
  assert.deepEqual(service.calls.at(-1),['avatar',user.id,png.length,'image/png']);
- const large=new FormData();large.append('avatar',new Blob([Buffer.alloc(2097153)],{type:'image/png'}),'huge.png');
+ const large=new FormData();large.append('avatar',new Blob([Buffer.alloc(10485761)],{type:'image/png'}),'huge.png');
  assert.equal((await req('/api/me/avatar',{method:'POST',token:'user-token',raw:large})).status,400);
 }));
 test('admin password reset requires admin role and strong password',()=>withApi(async(req,service)=>{
@@ -81,8 +81,20 @@ test('only admin can change another user avatar; validates target and image befo
  assert.equal((await req(route,{method:'POST',token:'admin-token'})).status,400);
  const invalid=new FormData();invalid.append('avatar',new Blob(['fake'],{type:'image/png'}),'avatar.png');
  assert.equal((await req(route,{method:'POST',token:'admin-token',raw:invalid})).status,400);
- const large=new FormData();large.append('avatar',new Blob([Buffer.alloc(2097153)],{type:'image/png'}),'large.png');
+ const large=new FormData();large.append('avatar',new Blob([Buffer.alloc(10485761)],{type:'image/png'}),'large.png');
  assert.equal((await req(route,{method:'POST',token:'admin-token',raw:large})).status,400);
  assert.equal((await req(route,{method:'POST',token:'admin-token',raw:form()})).status,200);
  assert.deepEqual(service.calls.at(-1),['avatar',user.id,8,'image/png']);
+}));
+
+test('self and admin avatar routes accept up to 10 MiB including images larger than the old limit',()=>withApi(async(req,service)=>{
+ for(const [route,token,size] of [
+  ['/api/me/avatar','user-token',3*1024*1024],
+  [`/api/admin/users/${user.id}/avatar`,'admin-token',10*1024*1024],
+ ]){
+  const bytes=Buffer.alloc(size);Buffer.from('89504e470d0a1a0a','hex').copy(bytes);
+  const form=new FormData();form.append('avatar',new Blob([bytes],{type:'image/png'}),'avatar.png');
+  const response=await req(route,{method:'POST',token,raw:form});
+  assert.equal(response.status,200);assert.deepEqual(service.calls.at(-1),['avatar',user.id,size,'image/png']);
+ }
 }));

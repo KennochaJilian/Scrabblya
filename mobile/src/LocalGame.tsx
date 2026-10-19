@@ -5,7 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { bonusAt, points } from './board';
-import { exchangeTiles, Game, passTurn, Placement, playMove, shuffle } from './engine';
+import { exchangeTiles, Game, passTurn, resignGame, finishIfBlocked, Placement, playMove, shuffle } from './engine';
 import { lexicon, lexiconMetadata } from './lexicon';
 import { BoardBounds, cellAtPoint, TileGrab, tilePosition } from './dropTarget';
 import { cellsRectangle, moveFeedback } from './moveFeedback';
@@ -28,11 +28,11 @@ function IconButton({icon,label,onPress,disabled=false,primary=false,count}:{ico
 function Action({label,onPress,disabled=false,icon='checkmark-outline'}:{label:string;onPress:()=>void;disabled?:boolean;icon?:IconName}) {
  return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[s.action,disabled&&{opacity:.35}]}><Ionicons name={icon} size={22} color={purple}/><Text style={s.actionText}>{label}</Text></Pressable>;
 }
-type GameProps={onBack:()=>void;participants?:PublicUser[];remote?:{game:Game;viewerId:string;onAction:(command:GameCommand)=>Promise<Game>}};
-export function LocalGame({onBack,participants,remote}:GameProps) {
- return <SafeAreaProvider><GameScreen onBack={onBack} participants={participants} remote={remote}/></SafeAreaProvider>;
+type GameProps={onBack:()=>void;onRematch?:()=>Promise<void>;participants?:PublicUser[];remote?:{game:Game;viewerId:string;onAction:(command:GameCommand)=>Promise<Game>}};
+export function LocalGame({onBack,onRematch,participants,remote}:GameProps) {
+ return <SafeAreaProvider><GameScreen onBack={onBack} onRematch={onRematch} participants={participants} remote={remote}/></SafeAreaProvider>;
 }
-function GameScreen({onBack,participants,remote}:GameProps) {
+function GameScreen({onBack,onRematch,participants,remote}:GameProps) {
  const participantSnapshot=useRef(participants);
  const storageKey=profileGameKey(participants);
  const online=!!remote,remoteGame=remote?.game;
@@ -47,6 +47,8 @@ function GameScreen({onBack,participants,remote}:GameProps) {
  const [drag,setDrag]=useState<{index:number;letter:string;sourceCell:number|null;value:number;grab:TileGrab}|null>(null),[hover,setHover]=useState<number|null>(null);
  const [rackHover,setRackHover]=useState<number|null>(null);
  const [dragReady,setDragReady]=useState(false),[feedbackDetails,setFeedbackDetails]=useState(false);
+ const [rematchBusy,setRematchBusy]=useState(false),[inviteSent,setInviteSent]=useState(false),[rematchError,setRematchError]=useState('');
+ const [confirmResign,setConfirmResign]=useState(false);
  const [menuOpen,setMenuOpen]=useState(false),[historyOpen,setHistoryOpen]=useState(false),[infoOpen,setInfoOpen]=useState(false),[resultDismissed,setResultDismissed]=useState(false);
  const [devOpen,setDevOpen]=useState(false),[devActive,setDevActive]=useState(false);
  const devBackup=useRef<{game:Game;draft:Placement[];order:number[];revealed:boolean}|null>(null);
@@ -60,7 +62,7 @@ function GameScreen({onBack,participants,remote}:GameProps) {
    if(cancelled)return;
    if(raw){const saved=JSON.parse(raw) as Game;
     if(saved.version!==1||saved.lexiconId!==lexicon.id||saved.board.length!==225||saved.players.length!==2)throw new Error('Sauvegarde incompatible.');
-    setGame(bindProfiles(saved,participantSnapshot.current));
+    const restored=bindProfiles(saved,participantSnapshot.current);const checked=finishIfBlocked(restored,lexicon);setGame(checked);if(checked!==restored){const write=saveQueue.then(()=>AsyncStorage.setItem(storageKey,JSON.stringify(checked)));saveQueue=write.catch(()=>{});return write;}
    }else{
     const created=createProfileGame(participantSnapshot.current,lexicon.id);
     const write=saveQueue.then(()=>AsyncStorage.setItem(storageKey,JSON.stringify(created)));
@@ -179,10 +181,10 @@ function GameScreen({onBack,participants,remote}:GameProps) {
  }
  function perform(action:()=>Game,command?:GameCommand){
   if(remote){
-   if(!command||!playable)return;
+   if(!command||!game||saving||game.status!=='playing'||(command.kind==='resign'?viewer<0:!playable))return;
    setSaving(true);setError('');
    remote.onAction(command).then(next=>commit(next)).catch(e=>setError((e as Error).message)).finally(()=>setSaving(false));
-  }else try{void commit(action());}catch(e){setError((e as Error).message);}
+  }else try{void commit(finishIfBlocked(action(),lexicon));}catch(e){setError((e as Error).message);}
  }
  return <SafeAreaView edges={['top','bottom','left','right']} style={s.safe}><ScrollView scrollEnabled={!drag} showsVerticalScrollIndicator={false} contentContainerStyle={{flexGrow:1}}><View testID="game-root" ref={rootRef} collapsable={false} style={[s.root,{minHeight:Math.max(height-insets.top-insets.bottom,boardWidth+349)}]}><StatusBar style="dark"/>
  <Image accessible={false} source={require('../assets/floral-corner-left.png')} style={s.flowers}/>
@@ -207,7 +209,7 @@ function GameScreen({onBack,participants,remote}:GameProps) {
   <View style={[s.dropTarget,{left:(hover%15)*cellSize-3,top:Math.floor(hover/15)*cellSize-3,width:cellSize+6,height:cellSize+6,borderColor:game.board[hover]||draft.some(p=>p.cell===hover&&p.rackIndex!==drag.index)?'#c5354f':'#4b0565',backgroundColor:game.board[hover]||draft.some(p=>p.cell===hover)?'#ffdde088':'#ffe69a99'}]}/>
  </View>}
  </View></View>
- <View style={[s.lastMoveZone,!lastTurn&&{flex:0,minHeight:8}]}>{lastTurn&&<Pressable accessibilityRole="button" accessibilityLabel="Dernier coup. Ouvrir l’historique" onPress={()=>setHistoryOpen(true)} style={s.lastMove}><Ionicons name={lastTurn.kind==='play'?'text-outline':lastTurn.kind==='pass'?'play-skip-forward-outline':'swap-horizontal-outline'} size={19} color={purple}/><Text numberOfLines={1} style={s.lastMoveText}>{visiblePlayers[lastTurn.player].name} · {lastTurn.kind==='play'?lastTurn.words.join(', '):lastTurn.kind==='pass'?'Passe':'Échange'}</Text>{lastTurn.kind==='play'&&<Text style={s.lastMoveScore}>+{lastTurn.score}</Text>}<Ionicons name="chevron-forward" size={15} color="#9b78b0"/></Pressable>}</View>
+ <View style={[s.lastMoveZone,!lastTurn&&{flex:0,minHeight:8}]}>{lastTurn&&<Pressable accessibilityRole="button" accessibilityLabel="Dernier coup. Ouvrir l’historique" onPress={()=>setHistoryOpen(true)} style={s.lastMove}><Ionicons name={lastTurn.kind==='resign'?'flag-outline':lastTurn.kind==='play'?'text-outline':lastTurn.kind==='pass'?'play-skip-forward-outline':'swap-horizontal-outline'} size={19} color={purple}/><Text numberOfLines={1} style={s.lastMoveText}>{visiblePlayers[lastTurn.player].name} · {lastTurn.kind==='play'?lastTurn.words.join(', '):lastTurn.kind==='resign'?'Abandon':lastTurn.kind==='pass'?'Passe':'Échange'}</Text>{lastTurn.kind==='play'&&<Text style={s.lastMoveScore}>+{lastTurn.score}</Text>}<Ionicons name="chevron-forward" size={15} color="#9b78b0"/></Pressable>}</View>
  </View>
  {!playable&&remote&&game.status==='playing'&&<Text accessibilityLiveRegion="polite" style={{textAlign:'center',color:purple,padding:6}}>Au tour de {visiblePlayers[game.current].name}</Text>}
  <View style={s.bottom}>
@@ -225,16 +227,22 @@ function GameScreen({onBack,participants,remote}:GameProps) {
  {drag&&dragReady&&<Animated.View pointerEvents="none" style={[s.dragTile,{width:drag.grab.width,height:drag.grab.height,transform:dragPoint.getTranslateTransform()}]}><TileFace size={drag.grab.width} letter={drag.letter} value={drag.value}/></Animated.View>}
  <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={()=>setMenuOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Scrabblya</Text><IconButton icon="close-outline" label="Fermer le menu" onPress={()=>setMenuOpen(false)}/></View>
 
+ {game?.status==='playing'&&<Action icon="flag-outline" label="Abandonner la partie" disabled={saving} onPress={()=>{setMenuOpen(false);setConfirmResign(true);}}/>}
  <Action icon="time-outline" label="Historique" onPress={()=>{setMenuOpen(false);setHistoryOpen(true);}}/>
  <Action icon="play-skip-forward-outline" label="Passer mon tour" disabled={!playable||!!draft.length} onPress={()=>{setMenuOpen(false);perform(()=>passTurn(game!),{kind:'pass'});}}/>
  {!remote&&<Action icon="refresh-outline" label="Nouvelle partie" onPress={()=>{setMenuOpen(false);setConfirmNew(true);}}/>}
  {!remote&&<Action icon="flask-outline" label="Mode développeur" disabled={saving||!game} onPress={()=>{setMenuOpen(false);setDevOpen(true);}}/>}
  <Action icon="information-circle-outline" label="Informations" onPress={()=>{setMenuOpen(false);setInfoOpen(true);}}/>
  </View></View></Modal>
- <Modal visible={historyOpen} transparent animationType="slide" onRequestClose={()=>setHistoryOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Historique</Text><IconButton icon="close-outline" label="Fermer l’historique" onPress={()=>setHistoryOpen(false)}/></View><ScrollView style={{maxHeight:420}}>{game?.history.length?[...game.history].reverse().map((t,i)=><View key={game.history.length-i} style={s.historyItem}><Ionicons name={t.kind==='play'?'text-outline':t.kind==='pass'?'play-skip-forward-outline':'swap-horizontal-outline'} size={22} color={purple}/><View style={{flex:1}}><Text style={s.name}>{visiblePlayers[t.player].name}</Text><Text style={s.subtitle}>{t.kind==='play'?t.words.join(', '):t.kind==='pass'?'Passe':'Échange'}</Text></View><Text style={s.name}>{t.kind==='play'?'+'+t.score:'—'}</Text></View>):<Text style={s.subtitle}>Aucun coup joué.</Text>}</ScrollView></View></View></Modal>
+ <Modal visible={confirmResign} transparent animationType="fade" onRequestClose={()=>setConfirmResign(false)}><View style={s.backdrop}><View style={s.modal}><Text style={s.title}>Abandonner la partie ?</Text><Text style={s.text}>Votre adversaire remportera la partie. Elle sera conservée dans les parties terminées.</Text><Action icon="flag-outline" label="Confirmer l’abandon" disabled={saving||game?.status!=='playing'} onPress={()=>{setConfirmResign(false);perform(()=>resignGame(game!,viewer),{kind:'resign'});}}/><Action icon="close-outline" label="Continuer la partie" onPress={()=>setConfirmResign(false)}/></View></View></Modal>
+ <Modal visible={historyOpen} transparent animationType="slide" onRequestClose={()=>setHistoryOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Historique</Text><IconButton icon="close-outline" label="Fermer l’historique" onPress={()=>setHistoryOpen(false)}/></View><ScrollView style={{maxHeight:420}}>{game?.history.length?[...game.history].reverse().map((t,i)=><View key={game.history.length-i} style={s.historyItem}><Ionicons name={t.kind==='resign'?'flag-outline':t.kind==='play'?'text-outline':t.kind==='pass'?'play-skip-forward-outline':'swap-horizontal-outline'} size={22} color={purple}/><View style={{flex:1}}><Text style={s.name}>{visiblePlayers[t.player].name}</Text><Text style={s.subtitle}>{t.kind==='play'?t.words.join(', '):t.kind==='resign'?'Abandon':t.kind==='pass'?'Passe':'Échange'}</Text></View><Text style={s.name}>{t.kind==='play'?'+'+t.score:'—'}</Text></View>):<Text style={s.subtitle}>Aucun coup joué.</Text>}</ScrollView></View></View></Modal>
  <Modal visible={infoOpen} transparent animationType="fade" onRequestClose={()=>setInfoOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>La partie</Text><IconButton icon="close-outline" label="Fermer les informations" onPress={()=>setInfoOpen(false)}/></View><Text style={s.text}>{game?.bag.length??0} lettres dans le sac · {game?.passes??0}/6 passes consécutives.</Text><Text style={s.text}>Glissez les lettres pour jouer ou organiser le chevalet. Les deux flèches vers le bas reprennent votre brouillon ; les flèches croisées mélangent les lettres. L’échange utilise votre tour.</Text><Text style={s.subtitle}>{remote?'Partie sauvegardée en ligne.':'Partie locale sauvegardée sur ce téléphone.'} Lexique familial Grammalecte 7.7 · {lexiconMetadata.count.toLocaleString('fr-FR')} mots · MPL 2.0 · différent de l’ODS.</Text></View></View></Modal>
- <Modal visible={!remote&&!!game&&game.status==='playing'&&!revealed&&!saving&&!menuOpen&&!historyOpen&&!infoOpen&&!confirmNew&&!devOpen&&!celebration} transparent animationType="fade" onRequestClose={onBack}><View style={s.backdrop}><View style={s.handoff}><Ionicons name="phone-portrait-outline" size={38} color={purple}/><Text style={s.title}>{visiblePlayers[game?.current??0]?.name}</Text><IconButton primary icon="eye-outline" label="Découvrir mon chevalet" onPress={()=>setRevealed(true)}/></View></View></Modal>
- <Modal visible={game?.status==='finished'&&!resultDismissed&&!celebration&&!devOpen} transparent animationType="fade" onRequestClose={()=>setResultDismissed(true)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Ionicons name="trophy-outline" size={36} color={purple}/><IconButton icon="close-outline" label="Fermer le résultat" onPress={()=>setResultDismissed(true)}/></View><Text style={s.title}>Partie terminée</Text><Text style={s.text}>{game&&(visiblePlayers[0].score===visiblePlayers[1].score?'Égalité !':visiblePlayers[visiblePlayers[0].score>visiblePlayers[1].score?0:1].name+' remporte la partie !')}</Text><Text style={s.subtitle}>Les reliquats ont été décomptés.</Text></View></View></Modal>
+ <Modal visible={!remote&&!!game&&game.status==='playing'&&!revealed&&!saving&&!menuOpen&&!historyOpen&&!infoOpen&&!confirmNew&&!confirmResign&&!devOpen&&!celebration} transparent animationType="fade" onRequestClose={onBack}><View style={s.backdrop}><View style={s.handoff}><Ionicons name="phone-portrait-outline" size={38} color={purple}/><Text style={s.title}>{visiblePlayers[game?.current??0]?.name}</Text><IconButton primary icon="eye-outline" label="Découvrir mon chevalet" onPress={()=>setRevealed(true)}/></View></View></Modal>
+ <Modal visible={game?.status==='finished'&&!resultDismissed&&!celebration&&!devOpen} transparent animationType="fade" onRequestClose={()=>setResultDismissed(true)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Ionicons name="trophy-outline" size={36} color={purple}/><IconButton icon="close-outline" label="Fermer le résultat" onPress={()=>setResultDismissed(true)}/></View><Text style={s.title}>Partie terminée</Text><Text style={s.text}>{game&&(game.endReason==='resignation'?visiblePlayers[1-game.resignedBy!].name+' remporte la partie par abandon !':visiblePlayers[0].score===visiblePlayers[1].score?'Égalité !':visiblePlayers[visiblePlayers[0].score>visiblePlayers[1].score?0:1].name+' remporte la partie !')}</Text><Text style={s.subtitle}>{game?.endReason==='resignation'?visiblePlayers[game.resignedBy!].name+' a abandonné. Les scores sont conservés.':game?.endReason==='blocked'?'Aucun coup possible, même après les échanges autorisés. Les reliquats ont été décomptés.':'Les reliquats ont été décomptés.'}</Text>
+ {!!rematchError&&<Text accessibilityRole="alert" style={s.text}>{rematchError}</Text>}
+ {onRematch?<Action icon="mail-outline" label={inviteSent?'Invitation envoyée':rematchBusy?'Envoi…':'Réinviter cet adversaire'} disabled={rematchBusy||inviteSent} onPress={()=>{if(rematchBusy||inviteSent)return;setRematchBusy(true);setRematchError('');void onRematch().then(()=>setInviteSent(true)).catch(e=>setRematchError((e as Error).message)).finally(()=>setRematchBusy(false));}}/>:!remote&&<Action icon="refresh-outline" label="Rejouer" disabled={saving} onPress={()=>{void commit(createProfileGame(participantSnapshot.current,lexicon.id));}}/>}
+ <Action icon="home-outline" label="Retour à l’accueil" onPress={onBack}/>
+ </View></View></Modal>
  <Modal visible={!!error} transparent animationType="fade" onRequestClose={()=>setError('')}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Ionicons name="alert-circle-outline" size={30} color="#b02b4a"/><IconButton icon="close-outline" label="Fermer l’erreur" onPress={()=>setError('')}/></View><Text style={s.text}>{error}</Text>{!game&&<Action icon="refresh-outline" label="Nouvelle partie" onPress={()=>{setError('');setConfirmNew(true);}}/>}</View></View></Modal>
  <Modal visible={devOpen} transparent animationType="fade" onRequestClose={()=>setDevOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Mode développeur</Text><IconButton icon="close-outline" label="Fermer le mode développeur" onPress={()=>setDevOpen(false)}/></View><Text style={s.subtitle}>Tests temporaires. Votre partie et sa sauvegarde sont conservées.</Text><ScrollView style={{maxHeight:400}} contentContainerStyle={{gap:10}}>
  <Action icon="remove-outline" label="Fin : égalité (200 / 200)" onPress={()=>loadDevScenario('tie')}/>

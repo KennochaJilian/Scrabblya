@@ -1,22 +1,24 @@
 import React,{useCallback,useEffect,useRef,useState} from 'react';
 import { ActivityIndicator,AppState,Modal,Pressable,ScrollView,StyleSheet,Text,View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { api } from './api';
+import { api,realtime } from './api';
 import type { PublicUser } from './apiClient';
 import { commandId,GameSummary } from './onlineTypes';
 import { UserAvatar } from './UserAvatar';
 export function GameLobby({user,users,onOpen,onPractice}:{user:PublicUser;users:PublicUser[];onOpen:(id:string)=>void;onPractice:()=>void}){
  const [games,setGames]=useState<GameSummary[]>([]),[tab,setTab]=useState<'active'|'pending'|'finished'>('active'),[invite,setInvite]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false),[loaded,setLoaded]=useState(false);
- const alive=useRef(true),fetching=useRef(false),working=useRef(false);
+ const alive=useRef(true),fetching=useRef(false),working=useRef(false),queued=useRef(false);
  const refresh=useCallback(async()=>{
-  if(fetching.current||AppState.currentState==='background')return;
+  if(AppState.currentState!=='active')return;
+  if(fetching.current){queued.current=true;return;}
   fetching.current=true;
-  try{const next=await api.games();if(alive.current){setGames(next);setError('');}}catch(e){if(alive.current)setError((e as Error).message);}finally{fetching.current=false;if(alive.current)setLoaded(true);}
+  try{do{queued.current=false;const next=await api.games();if(alive.current){setGames(next);setError('');}}while(queued.current&&alive.current&&AppState.currentState==='active');}catch(e){if(alive.current)setError((e as Error).message);}finally{fetching.current=false;if(alive.current)setLoaded(true);}
  },[]);
  useEffect(()=>{
-  alive.current=true;const initial=setTimeout(()=>{void refresh();},0);const timer=setInterval(()=>{void refresh();},10000);
+  alive.current=true;const initial=setTimeout(()=>{void refresh();},0);
+  const unsubscribe=realtime.subscribe(event=>{if(event.type==='disconnected')setError('Connexion temps réel interrompue. Reconnexion en cours…');else void refresh();});
   const sub=AppState.addEventListener('change',state=>{if(state==='active')void refresh();});
-  return ()=>{alive.current=false;clearTimeout(initial);clearInterval(timer);sub.remove();};
+  return ()=>{alive.current=false;clearTimeout(initial);unsubscribe();sub.remove();};
  },[refresh]);
  async function run(action:()=>Promise<void>){
   if(working.current)return;working.current=true;setBusy(true);setError('');
@@ -32,7 +34,7 @@ export function GameLobby({user,users,onOpen,onPractice}:{user:PublicUser;users:
  {filtered.map(game=>{
   const me=game.players.find(p=>p.id===user.id)!,other=game.players.find(p=>p.id!==user.id)!;
   return <View key={game.id} style={s.card}>
-   <Pressable accessibilityRole="button" disabled={game.status==='pending'} onPress={()=>onOpen(game.id)} style={s.row}><UserAvatar name={other.name} avatarUrl={other.avatarUrl} size={46}/><View style={{flex:1,gap:4}}><Text style={s.name}>{other.name}</Text><Text style={s.muted}>{game.status==='pending'?(game.inviterId===user.id?'Invitation envoyée':'Vous invite à jouer'):game.status==='finished'?'Partie terminée':game.currentUserId===user.id?'À vous de jouer':'En attente'}</Text></View><Text style={s.score}>{me.score} · {other.score}</Text>{game.status!=='pending'&&<Ionicons name="chevron-forward" size={21} color="#4b0565"/>}</Pressable>
+   <Pressable accessibilityRole="button" disabled={game.status==='pending'} onPress={()=>onOpen(game.id)} style={s.row}><UserAvatar name={other.name} avatarUrl={other.avatarUrl} size={46}/><View style={{flex:1,gap:4}}><Text style={s.name}>{other.name}</Text><Text style={s.muted}>{game.status==='pending'?(game.inviterId===user.id?'Invitation envoyée':'Vous invite à jouer'):game.status==='finished'?(game.endReason==='resignation'?'Abandon de '+game.players.find(p=>p.id===game.resignedByUserId)?.name:game.endReason==='blocked'?'Partie bloquée':'Partie terminée'):game.currentUserId===user.id?'À vous de jouer':'En attente'}</Text></View><Text style={s.score}>{me.score} · {other.score}</Text>{game.status!=='pending'&&<Ionicons name="chevron-forward" size={21} color="#4b0565"/>}</Pressable>
    {game.status==='pending'&&game.inviteeId===user.id&&<View style={s.row}><Pressable disabled={busy} accessibilityRole="button" onPress={()=>{void run(async()=>{const next=await api.gameAction(game.id,{id:commandId(),revision:game.revision,kind:'accept'});await refresh();onOpen(next.id);});}} style={s.accept}><Text style={{color:'white'}}>Accepter</Text></Pressable><Pressable disabled={busy} accessibilityRole="button" onPress={()=>{void run(async()=>{await api.gameAction(game.id,{id:commandId(),revision:game.revision,kind:'decline'});await refresh();});}} style={s.decline}><Text style={{color:'#4b0565'}}>Refuser</Text></Pressable></View>}
   </View>;
  })}

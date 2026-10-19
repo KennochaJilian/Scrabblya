@@ -12,6 +12,6 @@ alter table public.profiles enable row level security;
 revoke all on public.profiles from anon, authenticated;
 grant select, insert, update, delete on public.profiles to service_role;
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
-values ('avatars','avatars',false,2097152,array['image/jpeg','image/png','image/webp'])
-on conflict(id) do update set public=false,file_size_limit=2097152,
+values ('avatars','avatars',false,10485760,array['image/jpeg','image/png','image/webp'])
+on conflict(id) do update set public=false,file_size_limit=10485760,
  allowed_mime_types=array['image/jpeg','image/png','image/webp'];
