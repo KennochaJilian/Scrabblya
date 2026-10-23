@@ -1,3 +1,4 @@
+import { usePushNotifications } from './src/usePushNotifications';
 import React,{useCallback,useEffect,useState} from 'react';
 import { ActivityIndicator,Alert,BackHandler,Image,Keyboard,KeyboardAvoidingView,Platform,Pressable,ScrollView,StyleSheet,Text,TextInput,View,useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -22,6 +23,9 @@ function Application(){
  const [users,setUsers]=useState<PublicUser[]>([]),[opponent,setOpponent]=useState<PublicUser|null>(null),[name,setName]=useState('');
  const [onlineId,setOnlineId]=useState<string|null>(null);
  const [history,setHistory]=useState<('home'|'game'|'profile'|'admin')[]>([]);
+ const openNotification=useCallback((id:string)=>{setOnlineId(id);setScreen('game');setHistory(['home']);setMessage('');},[]);
+ const push=usePushNotifications(user?.id??null,!loading,screen==='game'?onlineId:null,openNotification);
+
  function navigate(next:typeof screen){if(next===screen)return;setHistory([...history,screen]);setScreen(next);setMessage('');}
  const goBack=useCallback(()=>{const previous=history.at(-1)??'home';setHistory(history.slice(0,-1));setScreen(previous);setMessage('');if(screen==='game')setOnlineId(null);},[history,screen]);
  useEffect(()=>{
@@ -74,6 +78,9 @@ function Application(){
  <Text style={s.title}>Mon profil</Text><View style={{alignItems:'center',gap:12}}><UserAvatar name={user.name} avatarUrl={user.avatarUrl} size={90}/><Button soft title="Choisir un avatar" disabled={busy} onPress={()=>{void avatar();}}/></View>
  <Text style={s.label}>Nom</Text><TextInput accessibilityLabel="Nom du profil" style={s.input} value={name} onChangeText={setName} maxLength={80}/><Text style={s.subtitle}>{user.email} · {user.role==='admin'?'Administrateur':'Utilisateur'}</Text>
  <Button title="Enregistrer" disabled={busy||!name.trim()} onPress={()=>{void execute(async()=>{await api.updateName(name);setMessage('Profil mis à jour.');});}}/>
+ <Text style={s.label}>Notifications</Text>
+ {!!push.message&&<Text style={s.subtitle}>{push.message}</Text>}
+ <Button soft title={push.status==='enabled'?'Notifications activées':push.status==='registering'?'Activation…':'Activer les notifications'} disabled={busy||push.status==='registering'||push.status==='enabled'||push.status==='unsupported'} onPress={()=>{void push.enable();}}/>
  <Button soft title="Se déconnecter" disabled={busy} onPress={()=>{void execute(async()=>{try{await api.logout();}finally{setUsers([]);setOpponent(null);setOnlineId(null);setHistory([]);setScreen('home');}});}}/>
  </View>:screen==='admin'&&user.role==='admin'?<View style={s.card}>
  <Text style={s.title}>Ajouter un utilisateur</Text><Text style={s.label}>Nom</Text><TextInput accessibilityLabel="Nom du nouvel utilisateur" style={s.input} value={newName} onChangeText={setNewName} maxLength={80}/>

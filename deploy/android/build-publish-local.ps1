@@ -89,7 +89,7 @@ if ($VersionCode -eq 0) {
     $VersionCode = [Math]::Max($minutes, $published + 1)
 }
 if ($VersionCode -le $published -or $VersionCode -gt 2100000000) { throw 'VersionCode doit etre superieur a la version publiee et <= 2100000000.' }
-$names = @('ANDROID_KEYSTORE_FILE','ANDROID_KEYSTORE_PASSWORD','ANDROID_KEY_ALIAS','ANDROID_KEY_PASSWORD','ANDROID_VERSION_CODE','CI','EXPO_NO_DOTENV','EXPO_PUBLIC_API_URL','NODE_OPTIONS','PATH')
+$names = @('SCRABBLYA_REQUIRE_PUSH','ANDROID_KEYSTORE_FILE','ANDROID_KEYSTORE_PASSWORD','ANDROID_KEY_ALIAS','ANDROID_KEY_PASSWORD','ANDROID_VERSION_CODE','CI','EXPO_NO_DOTENV','EXPO_PUBLIC_API_URL','NODE_OPTIONS','PATH')
 $previous = @{}
 foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 function Read-Secret([string]$Prompt) {
@@ -110,6 +110,7 @@ try {
     $env:ANDROID_KEY_PASSWORD = if ($keyPassword) { $keyPassword } else { $env:ANDROID_KEYSTORE_PASSWORD }
     $keyPassword = $null
     $env:ANDROID_VERSION_CODE = "$VersionCode"
+    $env:SCRABBLYA_REQUIRE_PUSH = '1'
     $env:CI = '1'; $env:EXPO_NO_DOTENV = '1'; $env:EXPO_PUBLIC_API_URL = $ApiUrl
     $env:NODE_OPTIONS = '--max-old-space-size=2048'
     $env:PATH = "$env:JAVA_HOME/bin;$env:PATH"

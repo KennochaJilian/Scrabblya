@@ -85,3 +85,13 @@ test('opening an active game checks for an already blocked position',async()=>{
  const rendered=await mount(OnlineGame);assert.equal(checks,1);assert.equal(rendered.root.findByType('Board').props.remote.game.endReason,'blocked');
  await act(async()=>rendered.unmount());
 });
+
+test('an invitation opened from a notification can be accepted directly',async()=>{
+ const invitation={...snapshot(0),status:'pending',inviteeId:'alice',inviterId:'bob',players:[{id:'alice',name:'Alice'},{id:'bob',name:'Bob'}]},calls=[];
+ const {OnlineGame}=harness({async game(){return invitation;},async gameAction(id,command){calls.push(command);return {...invitation,...snapshot(1),status:'active'};}});
+ const rendered=await mount(OnlineGame);
+ assert.equal(rendered.root.findAllByType('Board').length,0);
+ const accept=rendered.root.findAllByType('Pressable').find(p=>p.findAllByType('Text').some(t=>t.props.children==='Accepter l’invitation'));
+ await act(async()=>accept.props.onPress());assert.equal(calls.length,1);assert.equal(calls[0].kind,'accept');assert.equal(rendered.root.findAllByType('Board').length,1);
+ await act(async()=>rendered.unmount());
+});

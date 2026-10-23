@@ -16,6 +16,15 @@ services:
       SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?SUPABASE_SECRET_KEY is required}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://scrabblya.aquarius.irish}
       TRUST_PROXY_HOPS: 1
+      PUSH_ENABLED: ${PUSH_ENABLED:-false}
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-service-account.json
+    volumes:
+      - type: bind
+        source: ${FIREBASE_CREDENTIALS_PATH:-/opt/scrabblya/secrets/firebase-service-account.json}
+        target: /run/secrets/firebase-service-account.json
+        read_only: true
+        bind:
+          create_host_path: false
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m

@@ -1,3 +1,4 @@
+import { createPushRepository } from './push-repository.mjs';
 import { createGameRepository } from './game-repository.mjs';
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
@@ -30,6 +31,7 @@ export function createSupabaseService(config,{clientFactory=createClient}={}){
  }
  return {
   gameRepository:createGameRepository(admin),
+  pushRepository:createPushRepository(admin),
   async login(email,password){const {data,error}=await auth().auth.signInWithPassword({email,password});if(error)throw new ApiError(401,'Email ou mot de passe incorrect.');return sessionDTO(data.session);},
   async refresh(refreshToken){const {data,error}=await auth().auth.refreshSession({refresh_token:refreshToken});if(error)throw new ApiError(401,'Session expirée. Reconnectez-vous.');return sessionDTO(data.session);},
   async authenticate(token){const {data,error}=await admin.auth.getUser(token);if(error||!data.user)throw new ApiError(401,'Session invalide ou expirée.');return row(data.user.id);},

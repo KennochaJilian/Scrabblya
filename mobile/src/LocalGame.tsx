@@ -43,7 +43,7 @@ function GameScreen({onBack,onRematch,participants,remote}:GameProps) {
  const [joker,setJoker]=useState<{cell:number;rackIndex:number}|null>(null),[confirmNew,setConfirmNew]=useState(false);
  const [order,setOrder]=useState<number[]>([0,1,2,3,4,5,6]);
  const rootRef=useRef<View>(null),boardRef=useRef<View>(null),rackRef=useRef<View>(null),rackBounds=useRef<BoardBounds|null>(null),bounds=useRef<BoardBounds|null>(null),origin=useRef({x:0,y:0});
- const dragRef=useRef<{index:number;letter:string;sourceCell:number|null;value:number;grab:TileGrab;x:number;y:number;ready:boolean}|null>(null); const [dragPoint]=useState(()=>new Animated.ValueXY());
+ const dragRef=useRef<{index:number;letter:string;sourceCell:number|null;value:number;grab:TileGrab;x:number;y:number;ready:boolean;snapshot:Game}|null>(null); const [dragPoint]=useState(()=>new Animated.ValueXY());
  const [drag,setDrag]=useState<{index:number;letter:string;sourceCell:number|null;value:number;grab:TileGrab}|null>(null),[hover,setHover]=useState<number|null>(null);
  const [rackHover,setRackHover]=useState<number|null>(null);
  const [dragReady,setDragReady]=useState(false),[feedbackDetails,setFeedbackDetails]=useState(false);
@@ -72,9 +72,18 @@ function GameScreen({onBack,onRematch,participants,remote}:GameProps) {
   }).catch(()=>{if(!cancelled)setError('Impossible de lire la sauvegarde. Vous pouvez démarrer une nouvelle partie.');});
   return ()=>{cancelled=true;};
  },[storageKey,online]);
- // Reset a stale draft only when a newer server snapshot arrives.
+ // Keep private combinations across an opponent's turn; recover only collided
+ // tiles. Our own committed action or a finished game clears the draft.
  if(remoteGame&&remoteGame!==previousRemoteGame){
-  setPreviousRemoteGame(remoteGame);setGame(remoteGame);setDraft([]);setSelected(null);setExchange(false);setExchangeSelection([]);setOrder([0,1,2,3,4,5,6]);setRevealed(true);setResultDismissed(false);
+  const oldViewer=previousRemoteGame?.players.findIndex(p=>p.userId===remote?.viewerId)??-1;
+  const nextViewer=remoteGame.players.findIndex(p=>p.userId===remote?.viewerId);
+  const ownAction=!!previousRemoteGame&&remoteGame.history.length>previousRemoteGame.history.length&&remoteGame.history.at(-1)?.player===nextViewer;
+  const keep=remoteGame.status==='playing'&&oldViewer>=0&&nextViewer>=0&&!ownAction&&JSON.stringify(previousRemoteGame?.players[oldViewer].rack)===JSON.stringify(remoteGame.players[nextViewer].rack);
+  setPreviousRemoteGame(remoteGame);setGame(remoteGame);
+  setDraft(keep?draft.filter(p=>!remoteGame.board[p.cell]):[]);
+  if(!keep)setOrder([0,1,2,3,4,5,6]);
+  setSelected(null);setExchange(false);setExchangeSelection([]);setRevealed(true);setResultDismissed(false);
+  setDrag(null);setDragReady(false);setHover(null);setRackHover(null);setJoker(null);setFeedbackDetails(false);
  }
  // All writes are serialized, including writes from a previously unmounted screen.
  async function commit(next:Game){
@@ -87,11 +96,13 @@ function GameScreen({onBack,onRematch,participants,remote}:GameProps) {
   catch{setError('Sauvegarde impossible : le tour n’a pas été validé. Réessayez.');}
   finally{setSaving(false);}
  }
- const preview=useMemo(()=>game?moveFeedback(game,draft,lexicon):null,[game,draft]);
+ const viewer=remote?game?.players.findIndex(p=>p.userId===remote.viewerId)??-1:game?.current??0;
+ const preview=useMemo(()=>game?moveFeedback(online&&viewer>=0?{...game,current:viewer}:game,draft,lexicon):null,[game,draft,online,viewer]);
  const mainOutline=preview?.outlines[0];
  const mainRect=mainOutline?cellsRectangle(mainOutline,cellSize):null;
- const viewer=remote?game?.players.findIndex(p=>p.userId===remote.viewerId)??-1:game?.current??0;
- const playable=!!game&&game.status==='playing'&&(remote?viewer===game.current:revealed)&&!saving;
+
+ const editable=!!game&&game.status==='playing'&&(remote?viewer>=0:revealed)&&!saving;
+ const playable=editable&&(!remote||viewer===game?.current);
  const rack=game?.players[viewer]?.rack??[];
  const used=new Set(draft.map(p=>p.rackIndex));
  const visiblePlayers=game?(devActive?game.players:bindProfiles(game,participants).players):[];
@@ -105,12 +116,12 @@ function GameScreen({onBack,onRematch,participants,remote}:GameProps) {
   setRackHover(rackSlotAtPoint(x,y,rackBounds.current,rack.length,rackTileSize));
  }
  function startDrag(index:number,x:number,y:number,grab:TileGrab,sourceCell:number|null=null){
-  if(!playable||exchange||(sourceCell===null&&used.has(index)))return;
+  if(!editable||!game||exchange||(sourceCell===null&&used.has(index)))return;
   const pending=sourceCell===null?undefined:draft.find(p=>p.cell===sourceCell&&p.rackIndex===index);
   if(sourceCell!==null&&!pending)return;
   const ghostWidth=Math.max(80,grab.width*1.6),ghostHeight=ghostWidth;
   const enlargedGrab={offsetX:grab.offsetX*ghostWidth/grab.width,offsetY:grab.offsetY*ghostHeight/grab.height,width:ghostWidth,height:ghostHeight};
-  const active={index,letter:pending?.letter??rack[index],sourceCell,value:rack[index]==='?'?0:points[rack[index]],grab:enlargedGrab,x,y,ready:false};dragRef.current=active;
+  const active={snapshot:game,index,letter:pending?.letter??rack[index],sourceCell,value:rack[index]==='?'?0:points[rack[index]],grab:enlargedGrab,x,y,ready:false};dragRef.current=active;
   setDrag({...active});setDragReady(false);setSelected(null);bounds.current=null;rackBounds.current=null;
   rootRef.current?.measure((_x,_y,_w,_h,pageX,pageY)=>{
    if(dragRef.current!==active)return;
@@ -127,7 +138,7 @@ function GameScreen({onBack,onRematch,participants,remote}:GameProps) {
   });
  }
  function propose(cell:number,rackIndex:number){
-  if(!playable||exchange||game?.board[cell]||draft.some(p=>p.cell===cell)||used.has(rackIndex))return;
+  if(!editable||exchange||game?.board[cell]||draft.some(p=>p.cell===cell)||used.has(rackIndex))return;
   if(rack[rackIndex]==='?'){setJoker({cell,rackIndex});return;}
   setDraft(d=>[...d,{cell,rackIndex,letter:rack[rackIndex]}]);setSelected(null);
  }
@@ -139,6 +150,7 @@ function GameScreen({onBack,onRematch,participants,remote}:GameProps) {
   const active=dragRef.current;if(!active)return;
   const finishDrop=(rackRect:BoardBounds|null)=>{
    if(dragRef.current!==active)return;
+   if(!editable||active.snapshot!==game){cancelDrag();return;}
    const rackTarget=rackSlotAtPoint(x,y,rackRect,rack.length,rackTileSize);
    const cell=cellAtPoint(x,y,bounds.current);
    if(rackTarget!==null){
@@ -156,12 +168,12 @@ function GameScreen({onBack,onRematch,participants,remote}:GameProps) {
   else finishDrop(rackBounds.current);
  }
  function place(cell:number){
-  if(!playable||exchange)return;
+  if(!editable||exchange)return;
   const pending=draft.find(p=>p.cell===cell);if(pending){recoverDraft(pending.rackIndex);return;}
   if(selected!==null)propose(cell,selected);
  }
  function select(index:number){
-  if(!playable)return;
+  if(!editable)return;
   if(exchange){setExchangeSelection(a=>a.includes(index)?a.filter(i=>i!==index):[...a,index]);return;}
   setSelected(index);
  }
@@ -216,10 +228,10 @@ function GameScreen({onBack,onRematch,participants,remote}:GameProps) {
  {playable||remote?<><View testID="current-rack" ref={rackRef} collapsable={false} style={[s.rack,{width:boardWidth}]}>{order.filter(i=>i<rack.length).map((i,slot)=>exchange?<Pressable key={i} onPress={()=>select(i)} style={[s.exchangeTile,{width:rackTileSize,height:rackTileSize},exchangeSelection.includes(i)&&s.chosen]}><TileFace size={rackTileSize} letter={rack[i]} value={points[rack[i]]}/></Pressable>:<DraggableTile key={(used.has(i)?'placed-':'rack-')+i} size={rackTileSize} style={rackHover===slot?{backgroundColor:'#ffe69a',borderColor:'#ac743b'}:undefined} letter={used.has(i)?null:rack[i]} selected={selected===i} dragging={drag?.index===i} onStart={(x,y,grab)=>startDrag(i,x,y,grab)} onMove={moveDrag} onDrop={dropDrag} onCancel={cancelDrag} onSelect={()=>select(i)}/>)}</View></>:<View style={[s.hiddenRack,{width:boardWidth}]}>{Array.from({length:7},(_,i)=><TileFace key={i} size={rackTileSize} back/>)}</View>}
  <View style={s.toolbar}>
  <View style={s.toolbarSide}><IconButton icon="menu-outline" label="Menu de la partie" disabled={saving} onPress={()=>setMenuOpen(true)}/>
- <IconButton icon={exchange?'close-outline':'recover-tiles'} label={exchange?'Annuler l’échange':'Reprendre toutes les lettres'} disabled={!playable||(!exchange&&!draft.length)} onPress={()=>{if(exchange){setExchange(false);setExchangeSelection([]);}else recoverDraft();}}/>
+ <IconButton icon={exchange?'close-outline':'recover-tiles'} label={exchange?'Annuler l’échange':'Reprendre toutes les lettres'} disabled={!editable||(!exchange&&!draft.length)} onPress={()=>{if(exchange){setExchange(false);setExchangeSelection([]);}else recoverDraft();}}/>
  </View>
  {saving?<View style={s.primaryButton}><ActivityIndicator color="white"/></View>:<IconButton primary icon={game.status==='finished'?'trophy-outline':exchange?'checkmark-outline':'paper-plane-outline'} label={game.status==='finished'?'Résultat de la partie':exchange?'Confirmer l’échange':'Valider le mot'} count={exchange?exchangeSelection.length:undefined} disabled={game.status!=='finished'&&(!playable||(exchange?!exchangeSelection.length:!preview?.valid))} onPress={()=>{if(game.status==='finished')setResultDismissed(false);else perform(()=>exchange?exchangeTiles(game,exchangeSelection):playMove(game,draft,lexicon),exchange?{kind:'exchange',indices:exchangeSelection}:{kind:'play',placements:draft});}}/>}
- <View style={s.toolbarSide}><IconButton icon="shuffle-outline" label="Mélanger le chevalet" disabled={!playable||!!draft.length||exchange} onPress={()=>{setOrder(shuffle(order));setSelected(null);}}/>
+ <View style={s.toolbarSide}><IconButton icon="shuffle-outline" label="Mélanger le chevalet" disabled={!editable||!!draft.length||exchange} onPress={()=>{setOrder(shuffle(order));setSelected(null);}}/>
  <IconButton icon="swap-horizontal-outline" label="Choisir les lettres à échanger" disabled={!playable||!!draft.length||game.bag.length<7||exchange} onPress={()=>{setExchange(true);setSelected(null);}}/>
  <IconButton icon="bag-handle-outline" label={game.bag.length+' lettres restantes dans le sac'} count={game.bag.length} onPress={()=>setInfoOpen(true)}/>
  </View></View></View>

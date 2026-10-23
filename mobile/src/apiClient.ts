@@ -7,6 +7,7 @@ function debug(event:string,details:Record<string,unknown>={}){if(typeof __DEV__
 const tokenKey='scrabblya.refresh.v1';
 export class ApiClient{
  private session:Session|null=null;
+ private pushDeviceId:string|null=null;
  private epoch=0;
  private storageQueue:Promise<void>=Promise.resolve();
  private refreshing:Promise<Session>|null=null;
@@ -44,12 +45,15 @@ export class ApiClient{
   try{return await pending;}finally{if(this.refreshing===pending)this.refreshing=null;}
  }
  private async clear(){this.epoch++;this.session=null;this.refreshing=null;this.onUserChanged(null);await this.persist(()=>this.storage.deleteItemAsync(tokenKey));}
- async logout(){const token=this.session?.accessToken;await this.clear();if(token)await this.request('/auth/logout',{method:'POST',headers:{Authorization:'Bearer '+token}});} async call<T>(path:string,options:RequestInit={}):Promise<T>{
+ async logout(){const token=this.session?.accessToken,deviceId=this.pushDeviceId;this.pushDeviceId=null;await this.clear();if(token)await this.request('/auth/logout',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(deviceId?{deviceId}:{})});} async call<T>(path:string,options:RequestInit={}):Promise<T>{
   if(!this.session)throw new ApiError('Connexion requise.',401);
   if(this.session.expiresAt*1000<Date.now()+60000)await this.refresh();
   const send=()=>{if(!this.session)throw new ApiError('Connexion requise.',401);return this.request<T>(path,{...options,headers:{...options.headers,Authorization:'Bearer '+this.session.accessToken}});};
   try{return await send();}catch(error){if(!(error instanceof ApiError)||error.status!==401)throw error;await this.refresh();return send();}
  }
+ bindPushDevice(id:string|null){this.pushDeviceId=id;}
+ async registerPushDevice(id:string,token:string){await this.call<void>('/push/devices/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});}
+ async unregisterPushDevice(id:string){await this.call<void>('/push/devices/'+encodeURIComponent(id),{method:'DELETE'});}
  async realtimeCredentials(){
   if(!this.session)throw new ApiError('Connexion requise.',401);
   if(this.session.expiresAt*1000<Date.now()+60000)await this.refresh();

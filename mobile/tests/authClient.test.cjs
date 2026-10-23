@@ -73,3 +73,10 @@ test('avatar upload preserves multipart boundary and updates the authenticated p
  assert.equal(received.options.headers['Content-Type'],undefined);
  assert.equal(current.avatarUrl,updated.avatarUrl);
 });
+
+test('logout clears the local session and identifies only this installation for push removal',async()=>{
+ const calls=[],client=new ApiClient('https://api.test/api',memory(),async(url,options)=>{calls.push({url,options});return url.endsWith('/auth/login')?json(session()):new Response(null,{status:204});});
+ await client.login('alice@example.test','password');client.bindPushDevice('10000000-0000-4000-8000-000000000001');await client.logout();
+ assert.deepEqual(JSON.parse(calls.at(-1).options.body),{deviceId:'10000000-0000-4000-8000-000000000001'});
+ assert.equal(calls.at(-1).options.headers.Authorization,'Bearer access');await assert.rejects(()=>client.users(),ApiError);
+});

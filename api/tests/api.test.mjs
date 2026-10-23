@@ -6,6 +6,7 @@ import { seedAdmin } from '../scripts/seed-admin.mjs';
 const admin={id:'00000000-0000-4000-8000-000000000001',name:'Admin',email:'admin@example.test',role:'admin',avatarUrl:null};
 const user={id:'00000000-0000-4000-8000-000000000002',name:'Alice',email:'alice@example.test',role:'user',avatarUrl:null};
 function mockService(){const calls=[];return {calls,
+ pushRepository:{async register(userId,input){calls.push(['push-register',userId,input]);},async unregister(userId,id){calls.push(['push-unregister',userId,id]);}},
  async login(email,password){if(email!==user.email||password!=='correct-password')throw new ApiError(401,'Email ou mot de passe incorrect.');return {accessToken:'user-token',refreshToken:'refresh-token',expiresAt:123,user};},
  async refresh(token){if(token!=='refresh-token')throw new ApiError(401,'Session expirée.');return {accessToken:'renewed',refreshToken:'renewed-refresh',expiresAt:234,user};},
  async authenticate(token){if(token==='admin-token')return admin;if(token==='user-token')return user;throw new ApiError(401,'Session invalide.');},
@@ -109,4 +110,20 @@ test('admin renames and deletes users; ordinary users and self-deletion are refu
  assert.equal((await req('/api/admin/users/invalid',{method:'DELETE',token:'admin-token'})).status,400);
  assert.equal(service.calls.some(c=>c[0]==='delete'),false);
  assert.equal((await req(route,{method:'DELETE',token:'admin-token'})).status,204);assert.deepEqual(service.calls.at(-1),['delete',admin.id,user.id]);
+}));
+
+test('push registration binds the authenticated user, validates input and unregisters on logout',()=>withApi(async(req,service)=>{
+ const id='10000000-0000-4000-8000-000000000001',route='/api/push/devices/'+id,token='fcm-token-'.repeat(10);
+ assert.equal((await req(route,{method:'PUT',body:{token}})).status,401);
+ assert.equal((await req(route,{method:'PUT',token:'user-token',body:{token,userId:admin.id}})).status,400);
+ assert.equal((await req(route,{method:'PUT',token:'user-token',body:{token:'short'}})).status,400);
+ assert.equal((await req(route,{method:'PUT',token:'user-token',body:{token}})).status,204);
+ assert.deepEqual(service.calls.at(-1),['push-register',user.id,{deviceId:id,token}]);
+ assert.equal((await req(route,{method:'DELETE',token:'user-token'})).status,204);assert.deepEqual(service.calls.at(-1),['push-unregister',user.id,id]);
+ assert.equal((await req('/api/auth/logout',{method:'POST',token:'user-token',body:{deviceId:id}})).status,204);
+ assert.deepEqual(service.calls.slice(-2),[['push-unregister',user.id,id],['logout','user-token']]);
+ const status=await req('/api/push/status',{token:'user-token'});assert.deepEqual(await status.json(),{enabled:true});
+},{pushEnabled:true}));
+test('push registration reports disabled server without writing a device',()=>withApi(async(req,service)=>{
+ const response=await req('/api/push/devices/10000000-0000-4000-8000-000000000001',{method:'PUT',token:'user-token',body:{token:'fcm-token-'.repeat(10)}});assert.equal(response.status,503);assert.equal(service.calls.length,0);
 }));

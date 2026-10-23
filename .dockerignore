@@ -22,3 +22,8 @@
 !mobile/vendor/grammalecte/*.txt
 !mobile/vendor/grammalecte/*.zip
 mobile/vendor/grammalecte/lexique-grammalecte-fr-v7.7.txt
+
+# Firebase server keys never enter an image, even under an allowed directory.
+**/*firebase-adminsdk*.json
+**/*service-account*.json
+**/google-services.json

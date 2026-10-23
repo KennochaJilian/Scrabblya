@@ -4,7 +4,7 @@ import { api,realtime } from './api';
 import { LocalGame } from './LocalGame';
 import { commandId,GameCommand,OnlineSnapshot,VersionedCommand } from './onlineTypes';
 export function OnlineGame({id,userId,onBack}:{id:string;userId:string;onBack:()=>void}){
- const [snapshot,setSnapshot]=useState<OnlineSnapshot|null>(null),[error,setError]=useState('');
+ const [snapshot,setSnapshot]=useState<OnlineSnapshot|null>(null),[error,setError]=useState(''),[invitationBusy,setInvitationBusy]=useState(false);
  const current=useRef<OnlineSnapshot|null>(null),alive=useRef(true),sending=useRef(false),fetching=useRef(false),queued=useRef(false);
  const checked=useRef(false);
  const rematchId=useRef<string|null>(null);
@@ -52,6 +52,14 @@ export function OnlineGame({id,userId,onBack}:{id:string;userId:string;onBack:()
   rematchId.current??=commandId();
   await api.inviteGame(rematchId.current,opponent.id);
  },[userId]);
+ async function respond(kind:'accept'|'decline'){
+  if(!current.current||invitationBusy)return;setInvitationBusy(true);setError('');
+  try{const next=await api.gameAction(id,{id:commandId(),revision:current.current.revision,kind});install(next);if(kind==='decline')onBack();}
+  catch(e){setError((e as Error).message);}finally{setInvitationBusy(false);}
+ }
  if(!snapshot)return <View style={{flex:1,justifyContent:'center',alignItems:'center',padding:24,gap:20,backgroundColor:'#f3eafa'}}>{error?<Text style={{color:'#4b0565'}}>{error}</Text>:<ActivityIndicator color="#4b0565"/>}<Pressable onPress={()=>{void refresh();}}><Text>Réessayer</Text></Pressable></View>;
+ if(snapshot.status==='pending'||snapshot.status==='declined')return <View style={{flex:1,justifyContent:'center',padding:24,gap:20,backgroundColor:'#f3eafa'}}><Text style={{fontSize:24,fontWeight:'700',color:'#4b0565'}}>{snapshot.status==='declined'?'Invitation refusée':snapshot.inviteeId===userId?snapshot.players.find(p=>p.id!==userId)?.name+' vous invite à jouer':'Invitation envoyée'}</Text>
+ {snapshot.status==='pending'&&snapshot.inviteeId===userId&&<><Pressable accessibilityRole="button" disabled={invitationBusy} onPress={()=>{void respond('accept');}} style={{padding:16,borderRadius:20,backgroundColor:'#4b0565'}}><Text style={{color:'white',textAlign:'center'}}>Accepter l’invitation</Text></Pressable><Pressable accessibilityRole="button" disabled={invitationBusy} onPress={()=>{void respond('decline');}} style={{padding:16}}><Text style={{color:'#4b0565',textAlign:'center'}}>Refuser l’invitation</Text></Pressable></>}
+ {!!error&&<Text accessibilityRole="alert">{error}</Text>}<Pressable accessibilityRole="button" onPress={onBack}><Text style={{color:'#4b0565',textAlign:'center'}}>Retour à l’accueil</Text></Pressable></View>;
  return <View style={{flex:1}}>{!!error&&<Pressable onPress={()=>{void refresh();}} style={{padding:10,backgroundColor:'#fff0dc'}}><Text accessibilityLiveRegion="polite">{error} Touchez pour actualiser.</Text></Pressable>}<LocalGame onBack={onBack} onRematch={rematch} participants={snapshot.players.map(p=>({...p,role:'user' as const}))} remote={{game:snapshot.state,viewerId:userId,onAction:submit}}/></View>;
 }

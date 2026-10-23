@@ -105,21 +105,46 @@ test('online board sends only placements, preserves a rejected draft and never w
  await act(async()=>rendered.unmount());
 });
 
-test('waiting online player sees their own rack, cannot play and receives the next server turn',async()=>{
+test('waiting player builds a valid private combination, recalls tiles, and keeps it when their turn starts',async()=>{
  const load=require('./load-ts.cjs'),{createGame,passTurn}=load('src/engine.ts'),{lexicon}=load('src/lexicon.ts');
- const game=createGame(['Alice','Bob'],lexicon.id,()=>.4);game.players[0].userId='alice';game.players[1].userId='bob';game.players[0].rack=['?','?','?'];game.players[1].rack=['Z','A','C'];game.bag=game.bag.map(()=>'?');
- const {Game,writes}=harness(game);let rendered;const remote={game,viewerId:'bob',async onAction(){throw Error('Must not send');}};
+ const game=createGame(['Alice','Bob'],lexicon.id,()=>.4);game.players[0].userId='alice';game.players[1].userId='bob';game.players[0].rack=['?','?','?'];game.players[1].rack=[...'CHATERS'];game.bag=game.bag.map(()=>'?');
+ const {Game,writes}=harness(game);let rendered;const calls=[];const remote={game,viewerId:'bob',async onAction(command){calls.push(command);throw Error('Must not send');}};
  await act(async()=>{rendered=Renderer.create(React.createElement(Game,{onBack(){},remote}));});
- const rack=rendered.root.find(n=>n.type==='View'&&n.props.testID==='current-rack');assert.equal(rack.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre Z').length,1);
+ async function placeWord(){for(const [index,letter] of [...'CHAT'].entries()){
+  await act(async()=>host(rendered.root,'View','Lettre '+letter).props.onAccessibilityAction());
+  await act(async()=>rendered.root.find(n=>n.type==='Pressable'&&n.props.accessibilityLabel?.startsWith(`Ligne 8, colonne ${7+index},`)).props.onPress());
+ }}
+ await placeWord();
+ assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,4);
+ assert(rendered.root.findAllByType('Pressable').some(p=>p.props.accessibilityLabel?.startsWith('Coup valide, 18 points.')));
  assert.equal(host(rendered.root,'Pressable','Valider le mot').props.disabled,true);
- await act(async()=>host(rendered.root,'View','Lettre Z').props.onAccessibilityAction());
- await act(async()=>rendered.root.find(n=>n.type==='Pressable'&&n.props.accessibilityLabel?.startsWith('Ligne 8, colonne 8,')).props.onPress());
+ await act(async()=>host(rendered.root,'Pressable','Valider le mot').props.onPress());assert.equal(calls.length,0);
+ assert.equal(host(rendered.root,'Pressable','Reprendre toutes les lettres').props.disabled,false);
+ await act(async()=>host(rendered.root,'Pressable','Reprendre toutes les lettres').props.onPress());
  assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,0);
- const next=passTurn(game);
+ await placeWord();const next=passTurn(game);
  await act(async()=>rendered.update(React.createElement(Game,{onBack(){},remote:{...remote,game:next}})));
- await act(async()=>host(rendered.root,'View','Lettre Z').props.onAccessibilityAction());
- await act(async()=>rendered.root.find(n=>n.type==='Pressable'&&n.props.accessibilityLabel?.startsWith('Ligne 8, colonne 8,')).props.onPress());
- assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,1);
+ assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,4);
+ assert.equal(host(rendered.root,'Pressable','Valider le mot').props.disabled,false);
+ assert.equal(calls.length,0);assert.equal(writes.length,0);await act(async()=>rendered.unmount());
+});
+
+test('opponent move recovers only colliding draft tiles and keeps the other private letters',async()=>{
+ const load=require('./load-ts.cjs'),{createGame,playMove}=load('src/engine.ts'),{lexicon}=load('src/lexicon.ts');
+ const real=createGame(['Alice','Bob'],lexicon.id,()=>.4);real.players[0].userId='alice';real.players[1].userId='bob';real.players[0].rack=['A','S'];real.players[1].rack=[...'CHATERS'];
+ function redact(g){return {...g,bag:g.bag.map(()=>'?'),players:g.players.map((p,i)=>({...p,rack:i===0?p.rack.map(()=>'?'):p.rack}))};}
+ const game=redact(real),{Game,writes}=harness(real);let rendered;
+ const remote={game,viewerId:'bob',async onAction(){throw Error('Must not send');}};
+ await act(async()=>{rendered=Renderer.create(React.createElement(Game,{onBack(){},remote}));});
+ for(const [index,letter] of [...'CHAT'].entries()){
+  await act(async()=>host(rendered.root,'View','Lettre '+letter).props.onAccessibilityAction());
+  await act(async()=>rendered.root.find(n=>n.type==='Pressable'&&n.props.accessibilityLabel?.startsWith(`Ligne 8, colonne ${7+index},`)).props.onPress());
+ }
+ const next=redact(playMove(real,[{cell:112,rackIndex:0,letter:'A'},{cell:127,rackIndex:1,letter:'S'}],lexicon));
+ await act(async()=>rendered.update(React.createElement(Game,{onBack(){},remote:{...remote,game:next}})));
+ assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,3);
+ const rack=rendered.root.find(n=>n.type==='View'&&n.props.testID==='current-rack');
+ assert.equal(rack.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre H').length,1);
  assert.equal(writes.length,0);await act(async()=>rendered.unmount());
 });
 
@@ -153,4 +178,16 @@ test('end modal retries a failed invitation, prevents duplicates after success a
  assert.equal(attempts,2);assert.equal(action('Invitation envoyée').props.disabled,true);
  await act(async()=>action('Retour à l’accueil').props.onPress());assert.equal(home,1);
  await act(async()=>rendered.unmount());
+});
+
+test('waiting player can drag rack tiles onto the board, move them and return them to the rack',async()=>{
+ const load=require('./load-ts.cjs'),{createGame}=load('src/engine.ts'),{lexicon}=load('src/lexicon.ts');
+ const game=createGame(['Alice','Bob'],lexicon.id,()=>.4);game.players[0].userId='alice';game.players[1].userId='bob';game.players[0].rack=['?'];game.players[1].rack=[...'CHATERS'];
+ const {Game,writes}=harness(game);let rendered,calls=0;
+ await act(async()=>{rendered=Renderer.create(React.createElement(Game,{onBack(){},remote:{game,viewerId:'bob',async onAction(){calls++;throw Error('Must not send');}}}));});
+ async function drag(x,y){const letter=host(rendered.root,'View','Lettre C');await act(async()=>letter.props.onPanResponderGrant({nativeEvent:{pageX:180,pageY:280}}));await act(async()=>letter.props.onPanResponderMove({nativeEvent:{pageX:x,pageY:y}}));await act(async()=>letter.props.onPanResponderRelease({nativeEvent:{pageX:x,pageY:y}}));}
+ await drag(187,287);assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,1);
+ await drag(212,287);assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,1);
+ await drag(100,540);assert.equal(rendered.root.findAll(n=>n.type==='View'&&n.props.accessibilityLabel==='Lettre posée').length,0);
+ assert.equal(calls,0);assert.equal(writes.length,0);await act(async()=>rendered.unmount());
 });

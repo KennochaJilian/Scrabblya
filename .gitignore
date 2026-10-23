@@ -22,3 +22,7 @@ mobile/vendor/grammalecte/lexique-grammalecte-fr-v7.7.txt
 *.apk
 *.aab
 .env-*
+
+**/google-services.json
+**/*firebase-adminsdk*.json
+**/*service-account*.json

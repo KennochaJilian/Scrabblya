@@ -15,7 +15,7 @@ export function imageMime(buffer){
  if(buffer.length>=12&&buffer.toString('ascii',0,4)==='RIFF'&&buffer.toString('ascii',8,12)==='WEBP')return 'image/webp';
  return null;
 }
-export function createApp(service,{origins=[],trustProxyHops=0,loginLimit=10,realtime}={}){
+export function createApp(service,{origins=[],trustProxyHops=0,loginLimit=10,realtime,pushWorker,pushEnabled=false}={}){
  const app=express();app.disable('x-powered-by');if(trustProxyHops)app.set('trust proxy',trustProxyHops);
  app.use((req,res,next)=>{
   const id=randomUUID(),started=Date.now();res.set('X-Request-Id',id);
@@ -35,7 +35,7 @@ export function createApp(service,{origins=[],trustProxyHops=0,loginLimit=10,rea
   if(!match)throw new ApiError(401,'Connexion requise.');
   req.token=match[1];req.account=await service.authenticate(req.token);next();
  });
- const games=service.gameRepository?createGameService(service.gameRepository,service,{onChanged:row=>realtime?.gameChanged(row)}):null;
+ const games=service.gameRepository?createGameService(service.gameRepository,service,{onChanged:row=>{realtime?.gameChanged(row);pushWorker?.wake();}}):null;
  const available=()=>{if(!games)throw new ApiError(503,'Service de parties indisponible.');return games;};
  const revision=z.number().int().min(0),actionBase={id:z.uuid(),revision};
  const command=z.discriminatedUnion('kind',[
@@ -47,7 +47,18 @@ export function createApp(service,{origins=[],trustProxyHops=0,loginLimit=10,rea
  app.post('/api/games',limiter(30),async(req,res)=>res.status(201).json(await available().invite(req.account.id,z.object({id:z.uuid(),opponentId:z.uuid()}).strict().parse(req.body))));
  app.get('/api/games/:id',async(req,res)=>res.json(await available().get(req.account.id,z.uuid().parse(req.params.id))));
  app.post('/api/games/:id/actions',limiter(120),async(req,res)=>res.json(await available().act(req.account.id,z.uuid().parse(req.params.id),command.parse(req.body))));
- app.post('/api/auth/logout',async(req,res)=>{await service.logout(req.token);res.status(204).end();});
+ app.get('/api/push/status',(_req,res)=>res.json({enabled:pushEnabled}));
+ app.put('/api/push/devices/:id',limiter(60),async(req,res)=>{
+  if(!pushEnabled||!service.pushRepository)throw new ApiError(503,'Les notifications ne sont pas encore activées sur le serveur.');
+  const deviceId=z.uuid().parse(req.params.id),{token}=z.object({token:z.string().min(20).max(4096)}).strict().parse(req.body);
+  await service.pushRepository.register(req.account.id,{deviceId,token});pushWorker?.wake();res.status(204).end();
+ });
+ app.delete('/api/push/devices/:id',async(req,res)=>{const id=z.uuid().parse(req.params.id);await service.pushRepository?.unregister(req.account.id,id);res.status(204).end();});
+ app.post('/api/auth/logout',async(req,res)=>{
+  const {deviceId}=z.object({deviceId:z.uuid().optional()}).strict().parse(req.body??{});
+  if(deviceId&&service.pushRepository)await service.pushRepository.unregister(req.account.id,deviceId);
+  await service.logout(req.token);res.status(204).end();
+ });
  app.get('/api/me',async(req,res)=>res.json(await service.me(req.account.id)));
  app.get('/api/users',async(req,res)=>res.json({users:await service.listUsers(req.account.role==='admin')}));
  app.patch('/api/me',async(req,res)=>{const {name}=z.object({name:accountInput.shape.name}).strict().parse(req.body);const user=await service.updateName(req.account.id,name);realtime?.usersChanged();res.json(user);});
