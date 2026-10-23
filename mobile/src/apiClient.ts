@@ -65,6 +65,9 @@ export class ApiClient{
  private useProfile(user:PublicUser){if(!this.session||this.session.user.id!==user.id)throw new ApiError('Session annulée.',401);this.session.user=user;this.onUserChanged(user);return user;}
  async updateName(name:string){const user=await this.call<PublicUser>('/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});return this.useProfile(user);}
  async createUser(input:{name:string;email:string;password:string}){return this.call<PublicUser>('/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});}
+ async renameUser(id:string,name:string){const user=await this.call<PublicUser>('/admin/users/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});return this.session?.user.id===user.id?this.useProfile(user):user;}
+ async resetUserPassword(id:string,password:string){await this.call<void>('/admin/users/'+encodeURIComponent(id)+'/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});}
+ async deleteUser(id:string){await this.call<void>('/admin/users/'+encodeURIComponent(id),{method:'DELETE'});}
  async uploadUserAvatar(id:string,form:FormData){
   const user=await this.call<PublicUser>('/admin/users/'+encodeURIComponent(id)+'/avatar',{method:'POST',body:form});
   return this.session?.user.id===user.id?this.useProfile(user):user;

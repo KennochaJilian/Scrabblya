@@ -65,6 +65,15 @@ export function createApp(service,{origins=[],trustProxyHops=0,loginLimit=10,rea
   const user=await service.uploadAvatar(id,req.file.buffer,mime);realtime?.usersChanged();res.json(user);
  });
  app.post('/api/admin/users',limiter(30),async(req,res)=>{const user=await service.createAccount(accountInput.parse(req.body));realtime?.usersChanged();res.status(201).json(user);});
+ app.patch('/api/admin/users/:id',limiter(30),async(req,res)=>{
+  const id=z.uuid().parse(req.params.id),{name}=z.object({name:accountInput.shape.name}).strict().parse(req.body);
+  const user=await service.updateName(id,name);realtime?.usersChanged();res.json(user);
+ });
+ app.delete('/api/admin/users/:id',limiter(20),async(req,res)=>{
+  const id=z.uuid().parse(req.params.id);
+  if(id===req.account.id)throw new ApiError(409,'Vous ne pouvez pas supprimer votre propre compte.');
+  await service.deleteAccount(req.account.id,id);realtime?.usersChanged();realtime?.disconnectUser(id);res.status(204).end();
+ });
  app.put('/api/admin/users/:id/password',limiter(20),async(req,res)=>{
   const id=z.uuid().parse(req.params.id),{password}=z.object({password:accountInput.shape.password}).strict().parse(req.body);
   await service.resetPassword(id,password);res.status(204).end();

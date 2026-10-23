@@ -25,6 +25,7 @@ export function createGameService(repository,accounts,{random=secureRandom,lexic
   async list(userId){const rows=await repository.list(userId),people=await profiles(rows);return rows.map(row=>summary(row,people));},
   async get(userId,id){return view(await member(userId,id),userId);},
   async invite(userId,{id,opponentId}){
+   if(accounts.requireActive)await accounts.requireActive(opponentId);
    if(userId===opponentId)throw new ApiError(400,'Choisissez un autre joueur.');
    const existing=await repository.get(id);
    if(existing){if(existing.inviter_id===userId&&existing.invitee_id===opponentId)return view(existing,userId);throw new ApiError(409,'Identifiant d’invitation déjà utilisé.');}

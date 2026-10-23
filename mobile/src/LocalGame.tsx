@@ -228,6 +228,7 @@ function GameScreen({onBack,onRematch,participants,remote}:GameProps) {
  <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={()=>setMenuOpen(false)}><View style={s.backdrop}><View style={s.modal}><View style={s.row}><Text style={s.title}>Scrabblya</Text><IconButton icon="close-outline" label="Fermer le menu" onPress={()=>setMenuOpen(false)}/></View>
 
  {game?.status==='playing'&&<Action icon="flag-outline" label="Abandonner la partie" disabled={saving} onPress={()=>{setMenuOpen(false);setConfirmResign(true);}}/>}
+ <Action icon="home-outline" label="Retour à l’accueil" disabled={saving} onPress={()=>{setMenuOpen(false);onBack();}}/>
  <Action icon="time-outline" label="Historique" onPress={()=>{setMenuOpen(false);setHistoryOpen(true);}}/>
  <Action icon="play-skip-forward-outline" label="Passer mon tour" disabled={!playable||!!draft.length} onPress={()=>{setMenuOpen(false);perform(()=>passTurn(game!),{kind:'pass'});}}/>
  {!remote&&<Action icon="refresh-outline" label="Nouvelle partie" onPress={()=>{setMenuOpen(false);setConfirmNew(true);}}/>}

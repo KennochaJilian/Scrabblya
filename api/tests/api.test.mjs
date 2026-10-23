@@ -12,7 +12,8 @@ function mockService(){const calls=[];return {calls,
  async me(id){return id===admin.id?admin:user;},async logout(token){calls.push(['logout',token]);},
  async listUsers(privateFields){calls.push(['list',privateFields]);return [user];},
  async createAccount(input){calls.push(['create',input]);return {...user,...input,password:undefined};},
- async updateName(id,name){return {...user,id,name};},async resetPassword(id,password){calls.push(['reset',id,password]);},
+ async deleteAccount(actor,id){calls.push(['delete',actor,id]);},
+ async updateName(id,name){calls.push(['rename',id,name]);return {...user,id,name};},async resetPassword(id,password){calls.push(['reset',id,password]);},
  async uploadAvatar(id,buffer,mime){calls.push(['avatar',id,buffer.length,mime]);return {...user,avatarUrl:'https://example.test/signed-avatar'};},
  async seedAdmin(input){calls.push(['seed',input]);return {created:true,user:admin};},
 };}
@@ -97,4 +98,15 @@ test('self and admin avatar routes accept up to 10 MiB including images larger t
   const response=await req(route,{method:'POST',token,raw:form});
   assert.equal(response.status,200);assert.deepEqual(service.calls.at(-1),['avatar',user.id,size,'image/png']);
  }
+}));
+
+test('admin renames and deletes users; ordinary users and self-deletion are refused',()=>withApi(async(req,service)=>{
+ const route=`/api/admin/users/${user.id}`;
+ for(const method of ['PATCH','DELETE'])assert.equal((await req(route,{method,token:'user-token',...(method==='PATCH'?{body:{name:'Bob'}}:{})})).status,403);
+ for(const body of [{name:''},{name:'Bob',role:'admin'},{name:'Bob',email:'changed@example.test'}])assert.equal((await req(route,{method:'PATCH',token:'admin-token',body})).status,400);
+ const rename=await req(route,{method:'PATCH',token:'admin-token',body:{name:'  Bob  '}});assert.equal(rename.status,200);assert.equal((await rename.json()).name,'Bob');assert.deepEqual(service.calls.at(-1),['rename',user.id,'Bob']);
+ assert.equal((await req(`/api/admin/users/${admin.id}`,{method:'DELETE',token:'admin-token'})).status,409);
+ assert.equal((await req('/api/admin/users/invalid',{method:'DELETE',token:'admin-token'})).status,400);
+ assert.equal(service.calls.some(c=>c[0]==='delete'),false);
+ assert.equal((await req(route,{method:'DELETE',token:'admin-token'})).status,204);assert.deepEqual(service.calls.at(-1),['delete',admin.id,user.id]);
 }));

@@ -32,3 +32,21 @@ test('private avatar response uses signed URL without storage path',async()=>{
  const {service,calls}=provider({profile:{id:'id',name:'A',email:'a@example.test',role:'user',avatar_path:'private/avatar.png'}});
  const profile=await service.me('id');assert.equal(profile.avatarUrl,'https://storage.test/signed');assert.equal(profile.avatar_path,undefined);assert.deepEqual(calls.at(-1),['signed-url','private/avatar.png']);
 });
+
+test('deleted accounts cannot authenticate, but tombstone profiles remain readable for game history',async()=>{
+ const {service}=provider({profile:{id:'id',name:'Compte supprimé',role:'user',email:'deleted@example.test',deleted_at:'2026-10-23T00:00:00Z'}});
+ await assert.rejects(()=>service.authenticate('token'),{status:401});
+ await assert.rejects(()=>service.resetPassword('id','new-password-value'),{status:401});
+ await assert.rejects(()=>service.requireActive('id'),{status:404});
+ assert.equal((await service.me('id')).name,'Compte supprimé');
+});
+test('deletion revokes access transactionally before auth cleanup and cannot reopen on cleanup failure',async()=>{
+ const calls=[];
+ const admin={async rpc(name,input){calls.push(['rpc',name,input]);return {data:{avatarPath:'old/avatar.png'},error:null};},auth:{admin:{async deleteUser(id,soft){calls.push(['auth',id,soft]);return {error:{message:'temporary failure'}};}}},storage:{from(){return {async remove(paths){calls.push(['avatar',paths]);return {error:null};}}}}};
+ const service=createSupabaseService({url:'https://test',serviceKey:'secret',anonKey:'public'},{clientFactory:()=>admin});
+ await service.deleteAccount('admin-id','user-id');
+ assert.deepEqual(calls,[['rpc','admin_delete_account',{p_actor:'admin-id',p_target:'user-id'}],['auth','user-id',true],['avatar',['old/avatar.png']]]);
+ admin.rpc=async()=>({error:{message:'cannot_delete_self'}});await assert.rejects(()=>service.deleteAccount('admin-id','admin-id'),{status:409});
+ admin.rpc=async()=>({error:{message:'function missing'}});await assert.rejects(()=>service.deleteAccount('admin-id','user-id'),{status:503});
+ assert.equal(calls.length,3);
+});

@@ -42,6 +42,7 @@ export function createRealtimeHub({authenticate,origins=[],authTimeoutMs=5000,se
  return {
   attach(server){server.on('upgrade',upgrade);},
   gameChanged(row){const ids=new Set([row.inviter_id,row.invitee_id]);for(const [ws,id] of clients)if(ids.has(id))send(ws,{type:'game.changed',gameId:row.id,revision:row.revision});},
+  disconnectUser(userId){for(const [ws,id] of clients)if(id===userId)ws.close(4401,'Account removed');},
   usersChanged(){for(const ws of clients.keys())send(ws,{type:'users.changed'});},
   close(){for(const ws of wss.clients)ws.terminate();wss.close();},
  };

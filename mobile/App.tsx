@@ -32,6 +32,7 @@ function Application(){
   return ()=>subscription.remove();
  },[user,screen,goBack]);
 
+ const [editingId,setEditingId]=useState<string|null>(null),[editName,setEditName]=useState(''),[editPassword,setEditPassword]=useState('');
  const [newName,setNewName]=useState(''),[newEmail,setNewEmail]=useState(''),[newPassword,setNewPassword]=useState('');
  useEffect(()=>{
   if(!user)return;
@@ -79,10 +80,26 @@ function Application(){
  <Text style={s.label}>Email</Text><TextInput accessibilityLabel="Email du nouvel utilisateur" style={s.input} value={newEmail} onChangeText={setNewEmail} keyboardType="email-address" autoCapitalize="none"/>
  <Text style={s.label}>Mot de passe initial</Text><TextInput accessibilityLabel="Mot de passe initial du nouvel utilisateur" style={s.input} value={newPassword} onChangeText={setNewPassword} secureTextEntry autoCapitalize="none"/>
  <Text style={s.subtitle}>12 caractères minimum. Le nouveau compte aura le rôle utilisateur.</Text><Button title="Créer le compte" disabled={busy||!newName.trim()||!newEmail.trim()||newPassword.length<12} onPress={()=>{void execute(async()=>{await api.createUser({name:newName.trim(),email:newEmail.trim(),password:newPassword});setNewName('');setNewEmail('');setNewPassword('');setUsers(await api.users());setMessage('Compte créé.');});}}/>
- {users.map(p=><View key={p.id} style={s.person}><UserAvatar name={p.name} avatarUrl={p.avatarUrl} size={34}/><View style={{flex:1}}><Text style={s.personName}>{p.name}</Text><Text style={s.subtitle}>{p.email} · {p.role}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={`Modifier l’avatar de ${p.name}`} disabled={busy} onPress={()=>{void avatar(p.id);}} style={{padding:10,opacity:busy?.4:1}}><Ionicons name="camera-outline" size={24} color={purple}/></Pressable></View>)}
+ <Text style={s.title}>Utilisateurs</Text>
+ {users.map(p=><View key={p.id} style={{gap:12,backgroundColor:'#fff9ff',padding:14,borderRadius:20}}>
+ <View style={{flexDirection:'row',alignItems:'center',gap:8}}><UserAvatar name={p.name} avatarUrl={p.avatarUrl} size={34}/><View style={{flex:1}}><Text style={s.personName}>{p.name}</Text><Text style={s.subtitle}>{p.email} · {p.role}</Text></View>
+ <Pressable accessibilityRole="button" accessibilityLabel={`Modifier l’avatar de ${p.name}`} disabled={busy} onPress={()=>{void avatar(p.id);}} style={{padding:10,opacity:busy?.4:1}}><Ionicons name="camera-outline" size={24} color={purple}/></Pressable>
+ <Pressable accessibilityRole="button" accessibilityLabel={`Gérer ${p.name}`} disabled={busy} onPress={()=>{setEditingId(editingId===p.id?null:p.id);setEditName(p.name);setEditPassword('');setMessage('');}} style={{padding:10}}><Ionicons name={editingId===p.id?'chevron-up-outline':'create-outline'} size={24} color={purple}/></Pressable></View>
+ {editingId===p.id&&<>
+ <Text style={s.label}>Nom</Text><TextInput accessibilityLabel={`Nouveau nom de ${p.name}`} style={s.input} value={editName} onChangeText={setEditName} maxLength={80} editable={!busy}/>
+ <Button soft title="Enregistrer le nom" disabled={busy||!editName.trim()||editName.trim()===p.name} onPress={()=>{void execute(async()=>{const updated=await api.renameUser(p.id,editName.trim());setUsers(list=>list.map(person=>person.id===updated.id?updated:person));setMessage('Nom mis à jour.');});}}/>
+ <Text style={s.label}>Nouveau mot de passe</Text><TextInput accessibilityLabel={`Nouveau mot de passe de ${p.name}`} style={s.input} value={editPassword} onChangeText={setEditPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} maxLength={128} editable={!busy}/>
+ <Text style={s.subtitle}>12 caractères minimum. Le mot de passe actuel reste confidentiel.</Text>
+ <Button soft title="Modifier le mot de passe" disabled={busy||editPassword.length<12} onPress={()=>{void execute(async()=>{await api.resetUserPassword(p.id,editPassword);setEditPassword('');setMessage('Mot de passe modifié.');});}}/>
+ <Button soft title="Supprimer le compte" disabled={busy||p.id===user.id} onPress={()=>Alert.alert('Supprimer ce compte ?',`Supprimer le compte de ${p.name} ? Sa connexion sera bloquée et ses parties en cours seront terminées par abandon. L’historique restera disponible.`,[{text:'Annuler',style:'cancel'},{text:'Supprimer',style:'destructive',onPress:()=>{void execute(async()=>{await api.deleteUser(p.id);setUsers(list=>list.filter(person=>person.id!==p.id));setEditingId(null);setEditPassword('');setMessage('Compte supprimé.');});}}])}/>
+ {p.id===user.id&&<Text style={s.subtitle}>Vous ne pouvez pas supprimer votre propre compte.</Text>}
+ {!!message&&<Text accessibilityLiveRegion="polite" style={s.notice}>{message}</Text>}
+ </>}
+ </View>)}
+
  </View>:null}
  </>}
- {!!message&&!!user&&<Text accessibilityLiveRegion="polite" style={s.notice}>{message}</Text>}
+ {!!message&&!!user&&!(screen==='admin'&&editingId)&&<Text accessibilityLiveRegion="polite" style={s.notice}>{message}</Text>}
  </ScrollView></KeyboardAvoidingView></View>;
 }
 const s=StyleSheet.create({root:{flex:1,backgroundColor:'#f3eafa'},center:{justifyContent:'center',alignItems:'center'},flowers:{position:'absolute',bottom:0,left:0,width:210,height:330,opacity:.3},page:{width:'100%',maxWidth:600,alignSelf:'center',padding:20,paddingTop:48,paddingBottom:40,gap:18},loginPage:{paddingTop:28,paddingBottom:16,gap:10},loginBrand:{alignItems:'center',gap:4,marginBottom:8},loginCard:{padding:16,gap:10},loginInput:{padding:12},hero:{alignSelf:'center'},homeLogo:{width:76,height:76},brand:{fontSize:46,fontFamily:'serif',fontStyle:'italic',color:purple,textAlign:'center'},brandSmall:{fontSize:31,fontFamily:'serif',fontStyle:'italic',color:purple},tagline:{textAlign:'center',color:'#7d3b93'},card:{backgroundColor:'#ffffffed',borderRadius:25,padding:22,gap:16},title:{fontSize:23,fontWeight:'700',color:purple},heading:{fontSize:27,fontFamily:'serif',color:purple},label:{fontSize:15,fontWeight:'600',color:'#5f4773'},input:{borderWidth:1,borderColor:'#d9cfdf',borderRadius:12,padding:15,fontSize:16,color:purple,backgroundColor:'#fffcff'},password:{flexDirection:'row',alignItems:'center',borderWidth:1,borderColor:'#d9cfdf',borderRadius:12,backgroundColor:'#fffcff'},button:{backgroundColor:purple,padding:15,borderRadius:25,minHeight:48,alignItems:'center'},soft:{backgroundColor:'#e8dbf2'},buttonText:{fontSize:16,fontWeight:'700',color:'white'},header:{flexDirection:'row',justifyContent:'space-between',alignItems:'center'},subtitle:{fontSize:13,lineHeight:20,color:'#756b81'},link:{color:purple,textAlign:'center',textDecorationLine:'underline',padding:8},person:{flexDirection:'row',alignItems:'center',gap:12,backgroundColor:'#fff9ff',padding:16,borderRadius:20},personName:{flex:1,color:purple,fontSize:17,fontWeight:'600'},notice:{padding:16,borderRadius:14,backgroundColor:'#fff9e9',color:purple,lineHeight:22}});
