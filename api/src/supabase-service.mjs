@@ -30,6 +30,9 @@ export function createSupabaseService(config,{clientFactory=createClient}={}){
   return dto(inserted.data);
  }
  return {
+  async listCustomWords(){const {data,error}=await admin.from('custom_words').select('word').order('word');if(error)throw new ApiError(503,'Mots supplémentaires indisponibles. Vérifiez la migration 006_custom_words.sql.');return data.map(row=>row.word);},
+  async addCustomWord(word,actor){const {error}=await admin.from('custom_words').upsert({word,created_by:actor},{onConflict:'word',ignoreDuplicates:true});if(error)throw new ApiError(503,'Ajout du mot impossible.');},
+  async deleteCustomWord(word){const {error}=await admin.from('custom_words').delete().eq('word',word);if(error)throw new ApiError(503,'Suppression du mot impossible.');},
   gameRepository:createGameRepository(admin),
   pushRepository:createPushRepository(admin),
   async login(email,password){const {data,error}=await auth().auth.signInWithPassword({email,password});if(error)throw new ApiError(401,'Email ou mot de passe incorrect.');return sessionDTO(data.session);},

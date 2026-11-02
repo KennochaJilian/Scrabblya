@@ -127,3 +127,12 @@ test('push registration binds the authenticated user, validates input and unregi
 test('push registration reports disabled server without writing a device',()=>withApi(async(req,service)=>{
  const response=await req('/api/push/devices/10000000-0000-4000-8000-000000000001',{method:'PUT',token:'user-token',body:{token:'fcm-token-'.repeat(10)}});assert.equal(response.status,503);assert.equal(service.calls.length,0);
 }));
+
+test('custom words are admin-only, normalized, strictly validated and removable',()=>withApi(async(req,service)=>{
+ let words=[];service.listCustomWords=async()=>words;service.addCustomWord=async(word,actor)=>{assert.equal(actor,admin.id);words=[...new Set([...words,word])];};service.deleteCustomWord=async word=>{words=words.filter(w=>w!==word);};
+ for(const method of ['GET','POST','DELETE'])assert.equal((await req('/api/admin/words'+(method==='DELETE'?'/TEST':''),{method,token:'user-token',...(method==='POST'?{body:{word:'test'}}:{})})).status,403);
+ let r=await req('/api/admin/words',{method:'POST',token:'admin-token',body:{word:' été '}});assert.equal(r.status,201);assert.deepEqual((await r.json()).words,['ETE']);
+ for(const word of ['A','deux mots','ABC-DEF','123','ABCDEFGHIJKLMNOP'])assert.equal((await req('/api/admin/words',{method:'POST',token:'admin-token',body:{word}})).status,400);
+ assert.equal((await req('/api/admin/words',{method:'POST',token:'admin-token',body:{word:'TEST',role:'admin'}})).status,400);
+ r=await req('/api/admin/words/ETE',{method:'DELETE',token:'admin-token'});assert.deepEqual((await r.json()).words,[]);
+}));

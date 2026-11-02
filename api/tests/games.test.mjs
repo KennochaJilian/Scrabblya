@@ -139,3 +139,15 @@ test('a pass automatically ends an impossible game, but a rescuing bag keeps it 
   if(rescue){const checked=await service.act(a,game.id,command('check-blocked',next.revision));assert.equal(checked.revision,next.revision);}
  }
 });
+
+test('supplemental words validate existing games and removal restores rejection',async()=>{
+ const {service,accounts,active,rows,command}=setup({lexicon:{id:'custom-test',has:()=>false}});let extra=[];accounts.listCustomWords=async()=>extra;
+ const game=await active();const row=rows.get(game.id);row.state.players[row.state.current].rack=['Z','Z'];const actor=row.state.players[row.state.current].userId;
+ const placements=[{cell:112,rackIndex:0,letter:'Z'},{cell:113,rackIndex:1,letter:'Z'}];
+ await assert.rejects(()=>service.act(actor,game.id,command('play',1,{placements})),/Mot absent/);
+ extra=['ZZ'];assert.deepEqual((await service.get(actor,game.id)).customWords,['ZZ']);
+ const accepted=await service.act(actor,game.id,command('play',1,{placements}));assert.equal(accepted.state.board[112].letter,'Z');
+ extra=[];assert.deepEqual((await service.get(actor,game.id)).customWords,[]);
+ const row2=rows.get(game.id);row2.state.board=Array(225).fill(null);row2.state.players[row2.state.current].rack=['Z','Z'];
+ await assert.rejects(()=>service.act(row2.state.players[row2.state.current].userId,game.id,command('play',2,{placements})),/Mot absent/);
+});

@@ -1,6 +1,7 @@
 import React,{useCallback,useEffect,useRef,useState} from 'react';
 import { ActivityIndicator,AppState,Pressable,Text,View } from 'react-native';
 import { api,realtime } from './api';
+import { setCustomWords } from './lexicon';
 import { LocalGame } from './LocalGame';
 import { commandId,GameCommand,OnlineSnapshot,VersionedCommand } from './onlineTypes';
 export function OnlineGame({id,userId,onBack}:{id:string;userId:string;onBack:()=>void}){
@@ -11,10 +12,13 @@ export function OnlineGame({id,userId,onBack}:{id:string;userId:string;onBack:()
  const pending=useRef<{key:string;command:VersionedCommand}|null>(null);
  const install=useCallback((next:OnlineSnapshot)=>{
   if(!alive.current)return;
+  if(current.current&&next.revision<current.current.revision)return;
+  setCustomWords(next.customWords??[]);
   if(!current.current||next.revision>current.current.revision){current.current=next;setSnapshot(next);}
-  else if(next.revision===current.current.revision&&JSON.stringify(next.players)!==JSON.stringify(current.current.players)){
+  else if(next.revision===current.current.revision&&(JSON.stringify(next.players)!==JSON.stringify(current.current.players)||JSON.stringify(next.customWords)!==JSON.stringify(current.current.customWords))){
    // Renew signed avatar URLs without resetting an unsubmitted draft.
-   const updated={...next,state:current.current.state};current.current=updated;setSnapshot(updated);
+   const wordsChanged=JSON.stringify(next.customWords)!==JSON.stringify(current.current.customWords);
+   const updated={...next,state:wordsChanged?{...current.current.state}:current.current.state};current.current=updated;setSnapshot(updated);
   }
   setError('');
  },[]);

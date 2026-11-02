@@ -75,6 +75,10 @@ export function createApp(service,{origins=[],trustProxyHops=0,loginLimit=10,rea
   const mime=imageMime(req.file.buffer);if(!mime||mime!==req.file.mimetype)throw new ApiError(400,'Image PNG, JPEG ou WebP requise.');
   const user=await service.uploadAvatar(id,req.file.buffer,mime);realtime?.usersChanged();res.json(user);
  });
+ const customWord=z.string().trim().max(40).transform(w=>w.toUpperCase().replace(/Œ/g,'OE').replace(/Æ/g,'AE').normalize('NFD').replace(/[\u0300-\u036f]/g,'')).pipe(z.string().regex(/^[A-Z]{2,15}$/));
+ app.get('/api/admin/words',async(_req,res)=>res.json({words:await service.listCustomWords()}));
+ app.post('/api/admin/words',limiter(100),async(req,res)=>{const {word}=z.object({word:customWord}).strict().parse(req.body);await service.addCustomWord(word,req.account.id);realtime?.usersChanged();res.status(201).json({words:await service.listCustomWords()});});
+ app.delete('/api/admin/words/:word',limiter(100),async(req,res)=>{await service.deleteCustomWord(customWord.parse(req.params.word));realtime?.usersChanged();res.json({words:await service.listCustomWords()});});
  app.post('/api/admin/users',limiter(30),async(req,res)=>{const user=await service.createAccount(accountInput.parse(req.body));realtime?.usersChanged();res.status(201).json(user);});
  app.patch('/api/admin/users/:id',limiter(30),async(req,res)=>{
   const id=z.uuid().parse(req.params.id),{name}=z.object({name:accountInput.shape.name}).strict().parse(req.body);

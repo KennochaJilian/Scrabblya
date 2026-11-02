@@ -6,14 +6,16 @@ const metadata=JSON.parse(readFileSync(new URL('../../mobile/src/data/lexicon-me
 const words=new Set(JSON.parse(readFileSync(new URL('../../mobile/src/data/words.json',import.meta.url),'utf8')).split('\n'));
 export const serverLexicon={id:metadata.id,has:word=>words.has(word),entries:()=>words.values()};
 const secureRandom=()=>randomInt(0x100000000)/0x100000000;
-export function createGameService(repository,accounts,{random=secureRandom,lexicon=serverLexicon,onChanged=()=>{}}={}){
+export function createGameService(repository,accounts,{random=secureRandom,lexicon:baseLexicon=serverLexicon,onChanged=()=>{}}={}){
+ let cachedKey='',cachedLexicon=baseLexicon;
+ async function dictionary(){const extra=accounts.listCustomWords?await accounts.listCustomWords():[];const key=JSON.stringify(extra);if(key!==cachedKey){const additions=new Set(extra);cachedKey=key;cachedLexicon={id:baseLexicon.id,has:w=>baseLexicon.has(w)||additions.has(w),...(baseLexicon.entries?{entries:function*(){yield* baseLexicon.entries();yield* additions;}}:{})};}return {lexicon:cachedLexicon,customWords:extra};}
  async function member(userId,id){const row=await repository.get(id);if(!row||![row.inviter_id,row.invitee_id].includes(userId))throw new ApiError(404,'Partie introuvable.');return row;}
  async function profiles(rows){const ids=[...new Set(rows.flatMap(r=>[r.inviter_id,r.invitee_id]))];return new Map(await Promise.all(ids.map(async id=>[id,await accounts.me(id)])));}
  function summary(row,people){return {endReason:row.state.endReason,resignedByUserId:row.state.endReason==='resignation'?row.state.players[row.state.resignedBy]?.userId:null,id:row.id,lastActionId:row.last_action_id??null,status:row.status,revision:row.revision,inviterId:row.inviter_id,inviteeId:row.invitee_id,updatedAt:row.updated_at,currentUserId:row.state.players[row.state.current].userId,players:row.state.players.map(p=>({id:p.userId,name:people.get(p.userId).name,avatarUrl:people.get(p.userId).avatarUrl,score:p.score,rackCount:p.rack.length})),lastTurn:row.state.history.at(-1)??null};}
  async function view(row,userId){
   const people=await profiles([row]);
   const state={...row.state,bag:Array(row.state.bag.length).fill('?'),players:row.state.players.map(p=>({userId:p.userId,name:people.get(p.userId).name,avatarUrl:people.get(p.userId).avatarUrl,score:p.score,rack:p.userId===userId&&row.status!=='pending'?p.rack:Array(p.rack.length).fill('?')}))};
-  return {...summary(row,people),state};
+  return {...summary(row,people),state,customWords:(await dictionary()).customWords};
  }
  async function write(row,userId,command,patch){
   const next=await repository.replace(row.id,row.revision,{...patch,revision:row.revision+1,last_action_id:command.id,last_action_by:userId,updated_at:new Date().toISOString()});
@@ -30,11 +32,12 @@ export function createGameService(repository,accounts,{random=secureRandom,lexic
    const existing=await repository.get(id);
    if(existing){if(existing.inviter_id===userId&&existing.invitee_id===opponentId)return view(existing,userId);throw new ApiError(409,'Identifiant d’invitation déjà utilisé.');}
    const people=await profiles([{inviter_id:userId,invitee_id:opponentId}]);
-   const state=createGame([people.get(userId).name,people.get(opponentId).name],lexicon.id,random);
+   const state=createGame([people.get(userId).name,people.get(opponentId).name],baseLexicon.id,random);
    state.players.forEach((p,i)=>p.userId=i===0?userId:opponentId);
    const now=new Date().toISOString();const inserted=await repository.insert({id,inviter_id:userId,invitee_id:opponentId,status:'pending',revision:0,state,created_at:now,updated_at:now});onChanged(inserted);return view(inserted,userId);
   },
   async act(userId,id,command){
+   const {lexicon}=await dictionary();
    const row=await member(userId,id);
    if(row.last_action_id===command.id&&row.last_action_by===userId)return view(row,userId);
    if(command.revision!==row.revision)throw new ApiError(409,'La partie a changé. Actualisez-la avant de rejouer.');

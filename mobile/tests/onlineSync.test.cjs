@@ -9,7 +9,7 @@ function harness(api){
   file=path.resolve(__dirname,'..',file);if(cache.has(file))return cache.get(file).exports;
   const mod={exports:{}};cache.set(file,mod);
   const code=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
-  function req(id){if(id==='react-native')return native;if(id==='./api')return {api,realtime};if(id==='./LocalGame')return {LocalGame:props=>React.createElement('Board',props)};if(!id.startsWith('.'))return require(id);return load(path.resolve(path.dirname(file),id)+'.ts');}
+  function req(id){if(id==='react-native')return native;if(id==='./lexicon')return {setCustomWords(){}};if(id==='./api')return {api,realtime};if(id==='./LocalGame')return {LocalGame:props=>React.createElement('Board',props)};if(!id.startsWith('.'))return require(id);return load(path.resolve(path.dirname(file),id)+'.ts');}
   vm.runInThisContext('(function(require,module,exports){'+code+'\n})',{filename:file})(req,mod,mod.exports);return mod.exports;
  }
  return {OnlineGame:load('src/OnlineGame.tsx').OnlineGame,foreground(){callback('active');},event(event){for(const listener of listeners)listener(event);}};
@@ -94,4 +94,9 @@ test('an invitation opened from a notification can be accepted directly',async()
  const accept=rendered.root.findAllByType('Pressable').find(p=>p.findAllByType('Text').some(t=>t.props.children==='Accepter l’invitation'));
  await act(async()=>accept.props.onPress());assert.equal(calls.length,1);assert.equal(calls[0].kind,'accept');assert.equal(rendered.root.findAllByType('Board').length,1);
  await act(async()=>rendered.unmount());
+});
+
+test('lexicon update at the same game revision refreshes the board snapshot',async()=>{
+ let current={...snapshot(1),customWords:[]};const {OnlineGame,event}=harness({async game(){return current;}});const rendered=await mount(OnlineGame);const before=rendered.root.findByType('Board').props.remote.game;
+ current={...snapshot(1),customWords:['ZZ']};await act(async()=>event({type:'users.changed'}));assert.notEqual(rendered.root.findByType('Board').props.remote.game,before);assert.deepEqual(rendered.root.findByType('Board').props.remote.game,before);await act(async()=>rendered.unmount());
 });

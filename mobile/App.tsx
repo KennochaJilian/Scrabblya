@@ -11,6 +11,7 @@ import { UserAvatar } from './src/UserAvatar';
 import { LocalGame } from './src/LocalGame';
 import { OnlineGame } from './src/OnlineGame';
 import { GameLobby } from './src/GameLobby';
+import { CustomWordsAdmin } from './src/CustomWordsAdmin';
 const purple='#4b0565';
 function Button({title,onPress,disabled=false,soft=false}:{title:string;onPress:()=>void;disabled?:boolean;soft?:boolean}){return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[s.button,soft&&s.soft,disabled&&{opacity:.4}]}><Text style={[s.buttonText,soft&&{color:purple}]}>{title}</Text></Pressable>;}
 export default function App(){return <AuthProvider><Application/></AuthProvider>;}
@@ -83,6 +84,7 @@ function Application(){
  <Button soft title={push.status==='enabled'?'Notifications activées':push.status==='registering'?'Activation…':'Activer les notifications'} disabled={busy||push.status==='registering'||push.status==='enabled'||push.status==='unsupported'} onPress={()=>{void push.enable();}}/>
  <Button soft title="Se déconnecter" disabled={busy} onPress={()=>{void execute(async()=>{try{await api.logout();}finally{setUsers([]);setOpponent(null);setOnlineId(null);setHistory([]);setScreen('home');}});}}/>
  </View>:screen==='admin'&&user.role==='admin'?<View style={s.card}>
+ <CustomWordsAdmin/>
  <Text style={s.title}>Ajouter un utilisateur</Text><Text style={s.label}>Nom</Text><TextInput accessibilityLabel="Nom du nouvel utilisateur" style={s.input} value={newName} onChangeText={setNewName} maxLength={80}/>
  <Text style={s.label}>Email</Text><TextInput accessibilityLabel="Email du nouvel utilisateur" style={s.input} value={newEmail} onChangeText={setNewEmail} keyboardType="email-address" autoCapitalize="none"/>
  <Text style={s.label}>Mot de passe initial</Text><TextInput accessibilityLabel="Mot de passe initial du nouvel utilisateur" style={s.input} value={newPassword} onChangeText={setNewPassword} secureTextEntry autoCapitalize="none"/>
